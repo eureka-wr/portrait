@@ -22,6 +22,8 @@ CATV 职业肖像工作室第一阶段：面向小红书、微信等人工销售
 
 源码仓库：[eureka-wr/portrait](https://github.com/eureka-wr/portrait)
 
+在线交互 Demo：[portrait.catv.space](https://portrait.catv.space)
+
 ```text
 app/
   portrait/                       公开产品页
