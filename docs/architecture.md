@@ -33,5 +33,4 @@ D1 tables cover users, styles, DNA versions, prompt modules, orders, assets, com
 
 ## Deployment
 
-Vinext produces a Cloudflare Worker-compatible ESM build. Sites owns real D1/R2 provisioning from `.openai/hosting.json`. The project can remain standalone or move into a CATV monorepo without changing domain ids or API payloads.
-
+Vinext produces a Cloudflare Worker-compatible ESM build. Production hosting must bind D1 as `DB`, private R2 as `PORTRAIT_ASSETS`, and apply the checked-in `drizzle/` migrations. A separate Vercel build publishes the client-only interaction demo from `demo/`; it never stores customer media or calls a real provider. The project can remain standalone or move into a CATV monorepo without changing domain ids or API payloads.

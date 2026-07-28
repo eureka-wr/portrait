@@ -32,7 +32,7 @@ let initialization: Promise<void> | null = null;
 
 export function getPortraitDb() {
   if (!runtime.DB) {
-    throw new Error("数据库绑定 DB 不可用，请检查 .openai/hosting.json。");
+    throw new Error("数据库绑定 DB 不可用，请检查生产环境的 D1 配置。");
   }
   return runtime.DB;
 }

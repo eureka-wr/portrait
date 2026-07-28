@@ -32,7 +32,7 @@ The following API flow was run successfully with a generated test JPEG:
 ## Production checklist
 
 - Set a strong `ASSET_SIGNING_SECRET`.
-- Configure Sites access and `PORTRAIT_ADMIN_EMAIL`.
+- Configure the production host, D1/R2 bindings, the auth adapter and `PORTRAIT_ADMIN_EMAIL`.
 - Add `PORTRAIT_PROVIDER_API_KEY` only if real OpenAI editing should be enabled.
 - Schedule authenticated retention maintenance.
 - Confirm organization verification and current image-model availability.
@@ -41,4 +41,3 @@ The following API flow was run successfully with a generated test JPEG:
 ## Known next increments
 
 Move Canvas-derived previews/finals to a background image worker if server-side stored derivatives are required. Add full DNA draft editing/publish approval, a managed queue, and user-owned self-service only in Phase 2.
-

@@ -18,7 +18,9 @@ CATV 职业肖像工作室第一阶段：面向小红书、微信等人工销售
 
 ## 技术与目录
 
-项目采用 TypeScript、Next App Router 兼容的 Vinext、Cloudflare D1、Cloudflare R2、Drizzle、Vitest 和 Sites 部署流程。
+项目采用 TypeScript、Next App Router 兼容的 Vinext、Cloudflare D1、Cloudflare R2、Drizzle、Vitest，并提供独立的 Vercel 交互 Demo。
+
+源码仓库：[eureka-wr/portrait](https://github.com/eureka-wr/portrait)
 
 ```text
 app/
@@ -72,7 +74,7 @@ pnpm db:generate
 ## 管理员与权限
 
 - 本地 `localhost` 自动使用 `dev.admin@catv.local`，不需要硬编码前端密码。
-- 生产后台使用 Sites / ChatGPT Sign-in 识别用户；API 端再次验证身份。
+- 生产后台通过服务端身份适配器识别用户；API 端再次验证身份。
 - `PORTRAIT_ADMIN_EMAIL` 对应 Admin，其余已登录后台用户默认为 Operator。
 - Operator 可完成生产流程，但看不到系统密钥，不能发布 DNA 或修改 Provider。
 - Admin 可复制 DNA 草稿、查看完整 Prompt、管理 Provider 与保留策略。
@@ -171,6 +173,7 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm build:demo
 ```
 
 Vitest 覆盖 Prompt 顺序、Identity 首位、模块版本、checksum 稳定、DNA 差异、refinement、四风格、订单状态机、Mock 成功/部分/超时与存储安全契约。
@@ -179,9 +182,19 @@ Playwright 规格位于 `tests/e2e/portrait-production.spec.ts`（安装浏览�
 
 ## 部署
 
-`.openai/hosting.json` 声明逻辑 D1 `DB` 与 R2 `PORTRAIT_ASSETS`。Sites 在保存版本与部署时创建/绑定真实资源并应用 `drizzle/` 迁移。
+仓库区分两个部署面：
 
-生产必须配置：
+- `pnpm build:demo`：构建公开、无真实照片、无真实模型调用的浏览器内交互 Demo，输出到 `demo-dist/`；`vercel.json` 已配置 Vercel 使用该构建。
+- `pnpm build`：构建完整 Cloudflare Worker 生产系统。生产环境需要自行创建 D1 `DB`、私有 R2 `PORTRAIT_ASSETS`，应用 `drizzle/` 迁移，并配置身份适配器。
+
+Vercel Demo：
+
+```bash
+vercel link
+vercel --prod
+```
+
+完整生产环境必须配置：
 
 - 管理员邮箱与访问策略
 - 强随机 `ASSET_SIGNING_SECRET`
@@ -189,6 +202,8 @@ Playwright 规格位于 `tests/e2e/portrait-production.spec.ts`（安装浏览�
 - 定时调用受 Admin 保护的 `/api/portrait/maintenance`
 
 公开 `/portrait` 不提供上传、登录或支付；后台 `/admin/portrait` 需要身份。
+
+Vercel Demo 只使用虚构几何人物与浏览器内状态，不保存订单，也不代表真实 Provider 已配置。
 
 ## CATV 主站集成
 
@@ -207,4 +222,3 @@ Playwright 规格位于 `tests/e2e/portrait-production.spec.ts`（安装浏览�
 - DNA 草稿复制可用，完整可视化模块编辑器和发布审批仍建议作为下一增量。
 
 第二阶段建议依次增加：用户自助删除、对象存储派生任务、支付、自动质检、异步 worker；再进入多模型、A/B 测试与 Portrait DNA 实验。
-
