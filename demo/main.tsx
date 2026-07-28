@@ -1,58 +1,104 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowRight,
   Check,
+  CheckCircle2,
   ChevronLeft,
-  ClipboardCheck,
+  CircleAlert,
   Download,
-  FileText,
+  FileArchive,
   Image as ImageIcon,
-  Layers3,
+  LoaderCircle,
   LockKeyhole,
+  LogOut,
   RefreshCw,
-  Send,
   ShieldCheck,
   Sparkles,
-  WandSparkles,
+  Trash2,
+  Upload,
+  UserRoundCheck,
+  X,
 } from "lucide-react";
 import "../app/globals.css";
 import "./demo.css";
 
-type Stage =
-  | "source"
-  | "compiled"
+type JobStatus =
+  | "ready"
+  | "generating"
   | "review"
-  | "preview"
   | "selected"
-  | "delivered";
+  | "delivering"
+  | "delivered"
+  | "failed";
+
+type CandidateStatus = "pending" | "approved" | "rejected" | "selected";
 
 type Candidate = {
-  id: number;
-  score: number;
-  tone: string;
-  status: "pending" | "approved" | "preview" | "selected";
+  id: string;
+  label: string;
+  description: string;
+  mimeType: string;
+  status: CandidateStatus;
+  createdAt: string;
+  url: string;
 };
 
-const initialCandidates: Candidate[] = [
-  { id: 1, score: 91, tone: "slate", status: "pending" },
-  { id: 2, score: 89, tone: "blue", status: "pending" },
-  { id: 3, score: 87, tone: "warm", status: "pending" },
-  { id: 4, score: 85, tone: "mist", status: "pending" },
-];
-
-const stageLabels: Record<Stage, string> = {
-  source: "待生成",
-  compiled: "Prompt 已锁定",
-  review: "待内部审核",
-  preview: "等待客户选择",
-  selected: "客户已选择",
-  delivered: "已完成",
+type PortraitJob = {
+  id: string;
+  orderNo: string;
+  createdAt: string;
+  updatedAt: string;
+  customerName: string;
+  channel: string;
+  notes: string;
+  status: JobStatus;
+  source: {
+    originalName: string;
+    mimeType: string;
+    width: number;
+    height: number;
+    sizeBytes: number;
+    url: string;
+  };
+  candidates: Candidate[];
+  selectedCandidateId?: string;
+  model?: string;
+  promptHash?: string;
+  delivery?: {
+    createdAt: string;
+    filename: string;
+    url: string;
+  };
+  error?: string;
 };
+
+type SessionStatus = {
+  authenticated: boolean;
+  configured: {
+    access: boolean;
+    provider: boolean;
+    storage: boolean;
+  };
+  model: string;
+};
+
+const statusLabels: Record<JobStatus, string> = {
+  ready: "原图已就绪",
+  generating: "正在生成四张照片",
+  review: "等待人工审核",
+  selected: "最终照片已确定",
+  delivering: "正在制作交付包",
+  delivered: "交付包已完成",
+  failed: "生成未完成",
+};
+
+const channelOptions = ["职业主页", "简历 / CV", "小红书", "LinkedIn", "企业官网"];
+const jobStorageKey = "catv-portrait-current-job";
 
 function BrandMark() {
   return (
-    <span className="demo-brand-mark" aria-hidden="true">
+    <span className="brand-mark" aria-hidden="true">
       <i />
       <i />
       <i />
@@ -60,38 +106,80 @@ function BrandMark() {
   );
 }
 
-function PortraitVisual({
-  tone,
-  compact = false,
-}: {
-  tone: string;
-  compact?: boolean;
-}) {
-  return (
-    <div className={`portrait-visual tone-${tone} ${compact ? "is-compact" : ""}`}>
-      <span className="portrait-halo" />
-      <span className="portrait-hair" />
-      <span className="portrait-face" />
-      <span className="portrait-neck" />
-      <span className="portrait-body" />
-    </div>
+async function readJson<T>(response: Response): Promise<T> {
+  const payload = (await response.json().catch(() => ({}))) as T & {
+    error?: string;
+  };
+  if (!response.ok) {
+    throw new Error(payload.error || `请求失败（${response.status}）`);
+  }
+  return payload;
+}
+
+async function getSession() {
+  return readJson<SessionStatus>(
+    await fetch("/api/session", {
+      credentials: "include",
+      cache: "no-store",
+    }),
   );
+}
+
+async function fetchPortraitJob(jobId: string) {
+  const payload = await readJson<{ job: PortraitJob }>(
+    await fetch(`/api/studio?jobId=${encodeURIComponent(jobId)}`, {
+      credentials: "include",
+      cache: "no-store",
+    }),
+  );
+  return payload.job;
+}
+
+async function compressPhoto(file: File) {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error("请选择 JPEG、PNG 或 WebP 照片。");
+  }
+
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  const maxEdge = 2200;
+  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const context = canvas.getContext("2d");
+  if (!context) {
+    bitmap.close();
+    throw new Error("浏览器无法处理这张照片。");
+  }
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, "image/jpeg", 0.9),
+  );
+  if (!blob) throw new Error("照片压缩失败，请更换文件。");
+  if (blob.size > 4_000_000) {
+    throw new Error("照片处理后仍超过 4MB，请先缩小原图再上传。");
+  }
+  return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
+    type: "image/jpeg",
+  });
 }
 
 function Landing({ onEnter }: { onEnter: () => void }) {
   return (
-    <div className="demo-landing">
-      <header className="landing-nav">
-        <a className="landing-brand" href="#top" aria-label="CATV Portrait">
+    <div className="landing">
+      <header className="public-nav">
+        <a className="brand" href="#top">
           <BrandMark />
           <span>
             <strong>CATV</strong>
-            <small>PORTRAIT</small>
+            <small>PORTRAIT STUDIO</small>
           </span>
         </a>
-        <div className="demo-chip">
+        <div className="production-chip">
           <span />
-          INTERACTIVE DEMO
+          PRODUCTION BETA
         </div>
         <a
           className="github-link"
@@ -103,25 +191,25 @@ function Landing({ onEnter }: { onEnter: () => void }) {
         </a>
       </header>
 
-      <main id="top" className="landing-main">
-        <section className="landing-copy">
+      <main id="top" className="hero">
+        <section className="hero-copy">
           <p className="eyebrow">CATV PORTRAIT STUDIO · PHASE 01</p>
           <h1>
             不用变成别人，
             <br />
             也能看起来更职业。
           </h1>
-          <p className="landing-lead">
-            这不是一个“点一下就出图”的玩具，而是一套把身份保持、风格 DNA、
-            人工审核、客户选择与私有交付串起来的职业肖像生产系统。
+          <p className="hero-lead">
+            上传一张真实照片，生成四种职业形象。每张先经过人工审核，再定稿并下载
+            6 种常用规格；原图与结果均存放在私有空间。
           </p>
-          <div className="landing-actions">
-            <button className="demo-primary large" onClick={onEnter}>
-              进入生产流程 Demo <ArrowRight size={18} />
+          <div className="hero-actions">
+            <button className="primary large" onClick={onEnter}>
+              进入生产工作台 <ArrowRight size={18} />
             </button>
-            <span className="demo-price">
-              <strong>¥9.9</strong>
-              <small>一份 · 人工审核</small>
+            <span className="price">
+              <strong>4 张</strong>
+              <small>一次生成 · 人工定稿</small>
             </span>
           </div>
           <div className="trust-row">
@@ -129,164 +217,800 @@ function Landing({ onEnter }: { onEnter: () => void }) {
               <ShieldCheck size={16} /> 身份保持优先
             </span>
             <span>
-              <LockKeyhole size={16} /> 照片默认私有
+              <LockKeyhole size={16} /> 照片私有存储
             </span>
             <span>
-              <ClipboardCheck size={16} /> 每张人工审核
+              <UserRoundCheck size={16} /> 人工审核后交付
             </span>
           </div>
         </section>
 
-        <section className="landing-portraits" aria-label="四种职业肖像风格">
+        <section className="style-stack" aria-label="四种职业肖像风格">
           {[
-            ["01", "静默领导者", "slate"],
-            ["02", "国际职业形象", "blue"],
-            ["03", "高管领导力", "warm"],
-            ["04", "创业者工作室", "mist"],
-          ].map(([number, label, tone], index) => (
+            ["01", "静默领导者", "冷灰蓝 · 克制自信"],
+            ["02", "国际职业形象", "明亮中性 · 可信亲和"],
+            ["03", "高管领导力", "温润棚拍 · 稳定权威"],
+            ["04", "创业者工作室", "现代空间 · 自然松弛"],
+          ].map(([number, title, detail], index) => (
             <article
               key={number}
-              className="landing-portrait-card"
+              className={`style-card style-${index + 1}`}
               style={{ "--index": index } as React.CSSProperties}
             >
               <span>{number}</span>
-              <PortraitVisual tone={tone} />
-              <strong>{label}</strong>
+              <div className="portrait-placeholder">
+                <i />
+                <i />
+                <i />
+              </div>
+              <div>
+                <strong>{title}</strong>
+                <small>{detail}</small>
+              </div>
             </article>
           ))}
         </section>
       </main>
-      <footer className="landing-foot">
-        <span>Demo 使用虚构人物图形，不上传、不存储任何真实客户照片。</span>
+      <footer className="public-foot">
+        <span>真实模型调用 · 私有资产代理 · 可随时删除整份订单</span>
         <span>CATV PORTRAIT · 2026</span>
       </footer>
     </div>
   );
 }
 
-function StageRail({ stage }: { stage: Stage }) {
-  const current =
-    stage === "source"
-      ? 1
-      : stage === "compiled"
-        ? 2
-        : stage === "review"
-          ? 3
-          : stage === "preview"
-            ? 4
-            : stage === "selected"
-              ? 5
-              : 6;
+function Login({
+  session,
+  onAuthenticated,
+  onBack,
+}: {
+  session: SessionStatus;
+  onAuthenticated: () => void;
+  onBack: () => void;
+}) {
+  const [accessKey, setAccessKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const ready =
+    session.configured.access &&
+    session.configured.provider &&
+    session.configured.storage;
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await readJson<{ authenticated: boolean }>(
+        await fetch("/api/session", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessKey }),
+        }),
+      );
+      onAuthenticated();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "登录失败。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <div className="stage-rail" aria-label="生产流程">
-      {["原图", "Prompt", "候选", "预览", "选择", "交付"].map((item, index) => (
-        <div
-          key={item}
-          className={`stage-node ${index + 1 <= current ? "is-active" : ""}`}
-        >
-          <span>{String(index + 1).padStart(2, "0")}</span>
-          <strong>{item}</strong>
+    <div className="gate-page">
+      <button className="back-button" onClick={onBack}>
+        <ChevronLeft size={16} /> 返回产品页
+      </button>
+      <form className="gate-card" onSubmit={submit}>
+        <BrandMark />
+        <p className="eyebrow">PRIVATE PRODUCTION WORKSPACE</p>
+        <h1>进入职业肖像工作台</h1>
+        <p>照片和模型费用受访问口令保护。登录会话仅保存在安全 Cookie 中。</p>
+
+        <div className="readiness-list">
+          {[
+            ["私有图片存储", session.configured.storage],
+            ["OpenAI 图像模型", session.configured.provider],
+            ["工作台访问口令", session.configured.access],
+          ].map(([label, configured]) => (
+            <span key={String(label)} className={configured ? "is-ready" : ""}>
+              {configured ? <Check size={14} /> : <CircleAlert size={14} />}
+              {label}
+              <strong>{configured ? "已就绪" : "待配置"}</strong>
+            </span>
+          ))}
         </div>
-      ))}
+
+        <label>
+          工作台访问口令
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={accessKey}
+            onChange={(event) => setAccessKey(event.target.value)}
+            placeholder={ready ? "输入访问口令" : "部署配置尚未完成"}
+            disabled={!session.configured.access || busy}
+          />
+        </label>
+        {error && <div className="inline-error">{error}</div>}
+        <button
+          className="primary"
+          disabled={!session.configured.access || !accessKey || busy}
+        >
+          {busy ? <LoaderCircle className="spin" size={17} /> : <LockKeyhole size={16} />}
+          {busy ? "正在验证…" : "安全进入"}
+        </button>
+        {!ready && (
+          <small className="setup-note">
+            当前部署还缺少模型或安全配置；配置完成后本页会自动显示为“已就绪”。
+          </small>
+        )}
+      </form>
     </div>
   );
 }
 
-function Studio({ onBack }: { onBack: () => void }) {
-  const [stage, setStage] = useState<Stage>("source");
-  const [candidates, setCandidates] = useState<Candidate[]>(initialCandidates);
-  const [toast, setToast] = useState("Demo 已载入虚构订单 CATV-DEMO-001");
+function StageRail({ status }: { status: JobStatus }) {
+  const current =
+    status === "ready" || status === "failed"
+      ? 1
+      : status === "generating"
+        ? 2
+        : status === "review"
+          ? 3
+          : status === "selected" || status === "delivering"
+            ? 4
+            : 5;
+  return (
+    <div className="stage-rail">
+      {["原图就绪", "四图生成", "人工审核", "最终定稿", "交付下载"].map(
+        (label, index) => (
+          <div
+            key={label}
+            className={`stage-node ${index + 1 <= current ? "is-active" : ""}`}
+          >
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <strong>{label}</strong>
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
 
-  const previewCount = candidates.filter(
-    (candidate) =>
-      candidate.status === "preview" || candidate.status === "selected",
-  ).length;
+function UploadOrder({
+  onCreated,
+}: {
+  onCreated: (job: PortraitJob) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [channel, setChannel] = useState(channelOptions[0]);
+  const [notes, setNotes] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [error, setError] = useState("");
 
-  const previewCandidates = useMemo(
-    () =>
-      candidates.filter(
-        (candidate) =>
-          candidate.status === "preview" || candidate.status === "selected",
-      ),
-    [candidates],
+  useEffect(
+    () => () => {
+      if (preview) URL.revokeObjectURL(preview);
+    },
+    [preview],
   );
 
-  function compilePrompt() {
-    setStage("compiled");
-    setToast("Prompt 已编译：Identity Preservation 固定排在第一位。");
-  }
-
-  function generateCandidates() {
-    setStage("review");
-    setCandidates(initialCandidates);
-    setToast("Mock Provider 已生成 4 张内部候选，等待人工审核。");
-  }
-
-  function approveCandidate(id: number) {
-    setCandidates((current) =>
-      current.map((candidate) =>
-        candidate.id === id ? { ...candidate, status: "approved" } : candidate,
-      ),
-    );
-    setToast(`候选 #${id} 已通过人工检查。`);
-  }
-
-  function togglePreview(id: number) {
-    setCandidates((current) => {
-      const target = current.find((candidate) => candidate.id === id);
-      if (!target) return current;
-      if (target.status === "preview") {
-        return current.map((candidate) =>
-          candidate.id === id ? { ...candidate, status: "approved" } : candidate,
-        );
-      }
-      const selected = current.filter(
-        (candidate) => candidate.status === "preview",
-      ).length;
-      if (selected >= 2) {
-        setToast("客户预览最多保留两张。");
-        return current;
-      }
-      return current.map((candidate) =>
-        candidate.id === id ? { ...candidate, status: "preview" } : candidate,
+  async function choose(selected?: File) {
+    if (!selected) return;
+    setError("");
+    setProgress("正在压缩、校正方向并移除照片元数据…");
+    try {
+      const compressed = await compressPhoto(selected);
+      if (preview) URL.revokeObjectURL(preview);
+      setFile(compressed);
+      setPreview(URL.createObjectURL(compressed));
+      setProgress(
+        `处理完成 · ${(compressed.size / 1024 / 1024).toFixed(2)}MB · 可安全上传`,
       );
-    });
+    } catch (cause) {
+      setFile(null);
+      setPreview("");
+      setProgress("");
+      setError(cause instanceof Error ? cause.message : "照片处理失败。");
+    }
   }
 
-  function sendPreview() {
-    setStage("preview");
-    setToast("两张 640px 带保护标识的预览已准备完成。");
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!file || !consent) return;
+    setBusy(true);
+    setError("");
+    setProgress("正在上传到私有存储并检查图像…");
+    try {
+      const form = new FormData();
+      form.set("photo", file);
+      form.set("customerName", customerName);
+      form.set("channel", channel);
+      form.set("notes", notes);
+      form.set("consentConfirmed", "true");
+      const payload = await readJson<{ job: PortraitJob }>(
+        await fetch("/api/studio", {
+          method: "POST",
+          credentials: "include",
+          body: form,
+        }),
+      );
+      onCreated(payload.job);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "创建订单失败。");
+      setProgress("");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  function selectFinal(id: number) {
-    setCandidates((current) =>
-      current.map((candidate) =>
-        candidate.id === id
-          ? { ...candidate, status: "selected" }
-          : candidate.status === "selected"
-            ? { ...candidate, status: "preview" }
-            : candidate,
-      ),
+  return (
+    <form className="upload-layout" onSubmit={submit}>
+      <section className="panel upload-panel">
+        <div className="panel-kicker">
+          <span>SOURCE · PRIVATE</span>
+          <LockKeyhole size={15} />
+        </div>
+        <h1>创建一份职业肖像订单</h1>
+        <p className="panel-lead">
+          使用正面、清晰、无遮挡的单人照片。自然光或均匀室内光最适合保持身份。
+        </p>
+        <input
+          ref={inputRef}
+          hidden
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={(event) => choose(event.target.files?.[0])}
+        />
+        <button
+          type="button"
+          className={`dropzone ${preview ? "has-photo" : ""}`}
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            choose(event.dataTransfer.files[0]);
+          }}
+        >
+          {preview ? (
+            <>
+              <img src={preview} alt="待上传原图预览" />
+              <span>
+                <RefreshCw size={15} /> 更换照片
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="upload-icon">
+                <Upload size={24} />
+              </span>
+              <strong>点击选择或拖入客户照片</strong>
+              <small>JPEG / PNG / WebP · 自动压缩到 4MB 内</small>
+            </>
+          )}
+        </button>
+        {progress && <div className="upload-progress">{progress}</div>}
+      </section>
+
+      <section className="panel brief-panel">
+        <div className="panel-kicker">
+          <span>PRODUCTION BRIEF</span>
+          <Sparkles size={15} />
+        </div>
+        <h2>生产信息</h2>
+        <div className="form-grid">
+          <label>
+            客户姓名
+            <input
+              value={customerName}
+              onChange={(event) => setCustomerName(event.target.value)}
+              placeholder="例如：林小姐"
+              maxLength={80}
+            />
+          </label>
+          <label>
+            主要用途
+            <select value={channel} onChange={(event) => setChannel(event.target.value)}>
+              {channelOptions.map((option) => (
+                <option key={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+          <label className="full">
+            补充要求
+            <textarea
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder="可选：行业、职位、着装偏好、希望保留的个人特征。不要填写敏感个人信息。"
+              maxLength={600}
+            />
+          </label>
+        </div>
+        <label className="consent-row">
+          <input
+            type="checkbox"
+            checked={consent}
+            onChange={(event) => setConsent(event.target.checked)}
+          />
+          <span>
+            我确认照片中只有一位主体，已取得本人授权，并同意为其生成职业肖像。
+          </span>
+        </label>
+        {error && <div className="inline-error">{error}</div>}
+        <button className="primary create-button" disabled={!file || !consent || busy}>
+          {busy ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}
+          {busy ? "正在创建私有订单…" : "创建订单并进入生产"}
+        </button>
+      </section>
+    </form>
+  );
+}
+
+function GenerationProgress() {
+  return (
+    <div className="generation-progress">
+      <div className="generating-orbit">
+        <Sparkles size={22} />
+      </div>
+      <strong>四种职业形象正在生成</strong>
+      <p>身份保持、服装、光线与背景分别处理，通常需要 2–5 分钟。</p>
+      <div>
+        {["静默领导者", "国际职业形象", "高管领导力", "创业者工作室"].map(
+          (label, index) => (
+            <span key={label}>
+              <LoaderCircle className="spin" size={14} />
+              {String(index + 1).padStart(2, "0")} · {label}
+            </span>
+          ),
+        )}
+      </div>
+      <small>可以保持本页打开；服务端会在完成后保存到私有订单。</small>
+    </div>
+  );
+}
+
+function JobWorkspace({
+  job,
+  session,
+  onJob,
+  onClear,
+}: {
+  job: PortraitJob;
+  session: SessionStatus;
+  onJob: (job: PortraitJob) => void;
+  onClear: () => void;
+}) {
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState(
+    job.status === "ready" ? "原图已通过技术检查，可以生成四张候选。" : "",
+  );
+  const [error, setError] = useState("");
+
+  const approvedCount = job.candidates.filter((item) =>
+    ["approved", "selected"].includes(item.status),
+  ).length;
+  const selected = job.candidates.find(
+    (item) => item.id === job.selectedCandidateId,
+  );
+
+  async function action(
+    name: string,
+    extra: Record<string, unknown> = {},
+    pendingMessage?: string,
+  ) {
+    setBusy(name);
+    setError("");
+    if (pendingMessage) setMessage(pendingMessage);
+    try {
+      const payload = await readJson<{ job: PortraitJob }>(
+        await fetch("/api/studio", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: name, jobId: job.id, ...extra }),
+        }),
+      );
+      onJob(payload.job);
+      return payload.job;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "操作失败。");
+      throw cause;
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function removeOrder() {
+    const confirmed = window.confirm(
+      "确认永久删除这份订单？原图、候选图、交付包和任务记录都会从私有存储中删除。",
     );
-    setStage("selected");
-    setToast(`客户已选择候选 #${id}：更自然、更像本人。`);
+    if (!confirmed) return;
+    setBusy("delete");
+    setError("");
+    try {
+      await readJson<{ deleted: boolean }>(
+        await fetch("/api/studio", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "delete", jobId: job.id }),
+        }),
+      );
+      onClear();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "删除失败。");
+    } finally {
+      setBusy("");
+    }
   }
 
-  function exportDelivery() {
-    setStage("delivered");
-    setToast("已模拟导出 7 种无水印规格，订单完成。");
-  }
+  return (
+    <>
+      <section className="job-head">
+        <div>
+          <p className="eyebrow">CATV-{job.orderNo}</p>
+          <h1>{job.customerName || "未命名客户"} · 职业肖像生产</h1>
+          <span>
+            {job.channel} · 私有资产 · {session.model}
+          </span>
+        </div>
+        <div className={`status-pill status-${job.status}`}>
+          {job.status === "generating" || job.status === "delivering" ? (
+            <LoaderCircle className="spin" size={14} />
+          ) : (
+            <i />
+          )}
+          {statusLabels[job.status]}
+        </div>
+      </section>
 
-  function resetDemo() {
-    setStage("source");
-    setCandidates(initialCandidates);
-    setToast("演示订单已重置，可以重新体验完整流程。");
+      <StageRail status={job.status} />
+
+      <div className="job-grid">
+        <section className="panel source-summary">
+          <div className="panel-kicker">
+            <span>SOURCE · PRIVATE</span>
+            <LockKeyhole size={15} />
+          </div>
+          <h2>客户原图</h2>
+          <img src={job.source.url} alt="客户原图" />
+          <div className="source-facts">
+            <span>
+              <Check size={14} /> 文件签名与格式通过
+            </span>
+            <span>
+              <Check size={14} /> {job.source.width} × {job.source.height}px
+            </span>
+            <span>
+              <Check size={14} /> EXIF 已移除
+            </span>
+          </div>
+        </section>
+
+        <section className="panel production-panel">
+          <div className="panel-kicker">
+            <span>GENERATION ORCHESTRATOR</span>
+            <Sparkles size={15} />
+          </div>
+          <h2>四种职业形象</h2>
+          <p>
+            同一张原图会分别生成静默领导者、国际职业形象、高管领导力和创业者工作室。
+            身份保持指令固定在每个 Prompt 首位。
+          </p>
+          <dl>
+            <div>
+              <dt>模型</dt>
+              <dd>{job.model || session.model}</dd>
+            </div>
+            <div>
+              <dt>输出</dt>
+              <dd>1024 × 1536</dd>
+            </div>
+            <div>
+              <dt>质量</dt>
+              <dd>High</dd>
+            </div>
+          </dl>
+          {job.notes && (
+            <blockquote>
+              <strong>生产备注</strong>
+              {job.notes}
+            </blockquote>
+          )}
+          {(job.status === "ready" || job.status === "failed") && (
+            <button
+              className="primary generate-button"
+              disabled={busy === "generate" || !session.configured.provider}
+              onClick={() =>
+                action(
+                  "generate",
+                  {},
+                  "已提交真实模型，正在生成四种形象…",
+                ).catch(() => undefined)
+              }
+            >
+              {busy === "generate" ? (
+                <LoaderCircle className="spin" size={17} />
+              ) : (
+                <Sparkles size={17} />
+              )}
+              {busy === "generate" ? "正在生成，请保持页面打开…" : "生成 4 张真实候选"}
+            </button>
+          )}
+          {job.status === "failed" && (
+            <div className="inline-error">{job.error || "上次生成没有完成。"}</div>
+          )}
+        </section>
+
+        {(job.status === "generating" || busy === "generate") && (
+          <section className="panel candidates-panel full-panel">
+            <GenerationProgress />
+          </section>
+        )}
+
+        {job.candidates.length > 0 && (
+          <section className="panel candidates-panel full-panel">
+            <div className="review-heading">
+              <div>
+                <div className="panel-kicker">
+                  <span>HUMAN REVIEW</span>
+                  <UserRoundCheck size={15} />
+                </div>
+                <h2>人工审核四张候选</h2>
+                <p>检查是否像本人、五官和手部是否自然、服装与背景是否符合用途。</p>
+              </div>
+              <span>{approvedCount} 张已通过</span>
+            </div>
+            <div className="candidate-grid">
+              {job.candidates.map((candidate, index) => (
+                <article
+                  key={candidate.id}
+                  className={`candidate-card is-${candidate.status}`}
+                >
+                  <div className="candidate-image">
+                    <img src={candidate.url} alt={candidate.label} />
+                    <span>0{index + 1}</span>
+                    {candidate.status === "approved" && (
+                      <i className="approval-badge">
+                        <Check size={14} /> 已通过
+                      </i>
+                    )}
+                    {candidate.status === "selected" && (
+                      <i className="approval-badge selected-badge">
+                        <CheckCircle2 size={14} /> 已定稿
+                      </i>
+                    )}
+                    {candidate.status === "rejected" && (
+                      <i className="approval-badge rejected-badge">
+                        <X size={14} /> 已驳回
+                      </i>
+                    )}
+                  </div>
+                  <div className="candidate-copy">
+                    <strong>{candidate.label}</strong>
+                    <small>{candidate.description}</small>
+                  </div>
+                  <div className="candidate-actions">
+                    {candidate.status === "pending" && (
+                      <>
+                        <button
+                          disabled={Boolean(busy)}
+                          onClick={() =>
+                            action("review", {
+                              candidateId: candidate.id,
+                              decision: "approved",
+                            }).catch(() => undefined)
+                          }
+                        >
+                          <Check size={14} /> 通过
+                        </button>
+                        <button
+                          className="reject"
+                          disabled={Boolean(busy)}
+                          onClick={() =>
+                            action("review", {
+                              candidateId: candidate.id,
+                              decision: "rejected",
+                            }).catch(() => undefined)
+                          }
+                        >
+                          <X size={14} /> 驳回
+                        </button>
+                      </>
+                    )}
+                    {candidate.status === "approved" && (
+                      <button
+                        className="select-button"
+                        disabled={Boolean(busy)}
+                        onClick={() =>
+                          action("select", { candidateId: candidate.id }).catch(
+                            () => undefined,
+                          )
+                        }
+                      >
+                        设为最终照片
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+            {job.status === "review" && (
+              <div className="review-footer">
+                <span>
+                  <ShieldCheck size={15} /> 只有人工通过的照片才能定稿和导出
+                </span>
+                <button
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "重新生成会再次调用四次图像模型并产生费用，确认继续吗？",
+                      )
+                    ) {
+                      action("generate").catch(() => undefined);
+                    }
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  <RefreshCw size={14} /> 重新生成四张
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {selected && (
+          <section className="panel delivery-panel full-panel">
+            <div className="final-image">
+              <img src={selected.url} alt={`最终照片：${selected.label}`} />
+            </div>
+            <div className="delivery-copy">
+              <div className="panel-kicker">
+                <span>FINAL DELIVERY</span>
+                <FileArchive size={15} />
+              </div>
+              <h2>{selected.label} · 最终定稿</h2>
+              <p>
+                交付包会从最终照片生成高清 JPG、高清 PNG、1:1、4:5、简历竖版和网页压缩版。
+              </p>
+              <div className="format-list">
+                {["HD JPG", "HD PNG", "1:1", "4:5", "600×800", "WEB JPG"].map(
+                  (format) => (
+                    <span key={format}>
+                      <Check size={12} /> {format}
+                    </span>
+                  ),
+                )}
+              </div>
+              {job.delivery ? (
+                <a className="primary download-button" href={job.delivery.url}>
+                  <Download size={17} /> 下载 {job.delivery.filename}
+                </a>
+              ) : (
+                <button
+                  className="primary download-button"
+                  disabled={busy === "deliver" || job.status === "delivering"}
+                  onClick={() =>
+                    action("deliver", {}, "正在生成 6 种交付规格…").catch(
+                      () => undefined,
+                    )
+                  }
+                >
+                  {busy === "deliver" || job.status === "delivering" ? (
+                    <LoaderCircle className="spin" size={17} />
+                  ) : (
+                    <FileArchive size={17} />
+                  )}
+                  {busy === "deliver" || job.status === "delivering"
+                    ? "正在打包…"
+                    : "生成私有交付包"}
+                </button>
+              )}
+            </div>
+          </section>
+        )}
+      </div>
+
+      {(message || error) && (
+        <div className={`activity-bar ${error ? "has-error" : ""}`}>
+          {error ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}
+          <strong>{error || message}</strong>
+        </div>
+      )}
+
+      <div className="privacy-actions">
+        <span>
+          <LockKeyhole size={14} /> 原图、候选和交付文件均为私有资产
+        </span>
+        <button onClick={removeOrder} disabled={busy === "delete"}>
+          {busy === "delete" ? (
+            <LoaderCircle className="spin" size={14} />
+          ) : (
+            <Trash2 size={14} />
+          )}
+          删除订单与全部照片
+        </button>
+      </div>
+    </>
+  );
+}
+
+function Studio({
+  session,
+  onSession,
+  onBack,
+}: {
+  session: SessionStatus;
+  onSession: (session: SessionStatus) => void;
+  onBack: () => void;
+}) {
+  const [job, setJob] = useState<PortraitJob | null>(null);
+  const [storedJobId] = useState(() => localStorage.getItem(jobStorageKey));
+  const [loadingJob, setLoadingJob] = useState(Boolean(storedJobId));
+  const [loadError, setLoadError] = useState("");
+  const pollingJobId =
+    job && ["generating", "delivering"].includes(job.status) ? job.id : null;
+
+  const updateJob = useCallback((next: PortraitJob) => {
+    setJob(next);
+    localStorage.setItem(jobStorageKey, next.id);
+  }, []);
+
+  useEffect(() => {
+    if (!storedJobId) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void fetchPortraitJob(storedJobId)
+        .then((restored) => {
+          if (cancelled) return;
+          updateJob(restored);
+          setLoadError("");
+        })
+        .catch((cause: unknown) => {
+          if (cancelled) return;
+          localStorage.removeItem(jobStorageKey);
+          setJob(null);
+          setLoadError(cause instanceof Error ? cause.message : "订单恢复失败。");
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingJob(false);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [storedJobId, updateJob]);
+
+  useEffect(() => {
+    if (!pollingJobId) return;
+    const timer = window.setInterval(() => {
+      void fetchPortraitJob(pollingJobId)
+        .then(updateJob)
+        .catch(() => undefined);
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [pollingJobId, updateJob]);
+
+  async function logout() {
+    await fetch("/api/session", {
+      method: "DELETE",
+      credentials: "include",
+    });
+    onSession({ ...session, authenticated: false });
   }
 
   return (
     <div className="studio-shell">
-      <aside className="studio-sidebar">
-        <button className="studio-brand" onClick={onBack}>
+      <aside className="sidebar">
+        <button className="sidebar-brand" onClick={onBack}>
           <BrandMark />
           <span>
             <strong>CATV</strong>
@@ -294,339 +1018,116 @@ function Studio({ onBack }: { onBack: () => void }) {
           </span>
         </button>
         <nav>
-          <span className="nav-label">生产</span>
-          <button className="nav-item is-active">
-            <Layers3 size={18} /> 订单工作台
+          <span>生产</span>
+          <button className="is-active">
+            <ImageIcon size={17} /> 当前订单
           </button>
-          <button className="nav-item">
-            <ImageIcon size={18} /> 全部订单 <i>1</i>
-          </button>
-          <span className="nav-label">系统</span>
-          <button className="nav-item">
-            <Sparkles size={18} /> Portrait DNA
-          </button>
-          <button className="nav-item">
-            <FileText size={18} /> Prompt 模块
-          </button>
+          <span>安全</span>
+          <div>
+            <ShieldCheck size={17} />
+            <p>
+              <strong>PRIVATE MODE</strong>
+              <small>受控读取 · 私有 Blob</small>
+            </p>
+          </div>
         </nav>
         <div className="sidebar-foot">
-          <strong>
-            <span /> DEMO SAFE
-          </strong>
-          <small>虚构数据 · 不调用真实模型</small>
-          <button onClick={onBack}>
-            <ChevronLeft size={15} /> 返回产品页
+          <span>
+            <i /> MODEL READY
+          </span>
+          <small>{session.model}</small>
+          <button onClick={logout}>
+            <LogOut size={14} /> 退出工作台
           </button>
         </div>
       </aside>
 
-      <div className="studio-content">
+      <div className="studio-main">
         <header className="studio-topbar">
-          <span>人工生产空间 · 交互演示</span>
+          <span>人工生产空间 · Phase 01</span>
           <div>
-            <LockKeyhole size={15} />
-            隐私资产保护中
-            <strong>DEMO OPERATOR</strong>
+            <LockKeyhole size={14} />
+            私有会话
+            <strong>OPERATOR</strong>
           </div>
         </header>
-
         <main className="workspace">
-          <section className="workspace-head">
-            <div>
-              <button className="back-link" onClick={onBack}>
-                <ChevronLeft size={14} /> 产品页
-              </button>
-              <p>CATV-DEMO-001</p>
-              <h1>林小姐 · 虚构演示订单</h1>
-              <span>静默领导者 · DNA v1.0 · 小红书</span>
+          {loadingJob ? (
+            <div className="workspace-loading">
+              <LoaderCircle className="spin" size={22} /> 正在恢复生产订单…
             </div>
-            <div className={`status-pill status-${stage}`}>
-              <i />
-              {stageLabels[stage]}
-            </div>
-          </section>
-
-          <StageRail stage={stage} />
-
-          <div className="workspace-grid">
-            <section className="studio-card source-card">
-              <div className="card-kicker">
-                <span>SOURCE · PRIVATE</span>
-                <LockKeyhole size={15} />
-              </div>
-              <h2>客户原图</h2>
-              <div className="source-body">
-                <PortraitVisual tone="source" />
-                <div className="source-checks">
-                  <span>
-                    <Check /> 格式与文件签名 <strong>通过</strong>
-                  </span>
-                  <span>
-                    <Check /> 主脸数量 <strong>1 · 人工确认</strong>
-                  </span>
-                  <span>
-                    <Check /> 曝光与清晰度 <strong>可生成</strong>
-                  </span>
-                </div>
-              </div>
-            </section>
-
-            <section className="studio-card dna-card">
-              <div className="card-kicker">
-                <span>PORTRAIT DNA</span>
-                <span className="tiny-pill">ACTIVE · v1.0</span>
-              </div>
-              <h2>静默领导者</h2>
-              <p>
-                极简、克制且高智感的科技管理层形象。浅灰蓝背景与柔和棚拍让注意力只落在人物本身。
-              </p>
-              <div className="tag-row">
-                <span>安静自信</span>
-                <span>极简科技</span>
-                <span>真实皮肤</span>
-              </div>
-              <dl>
-                <div>
-                  <dt>模块</dt>
-                  <dd>17</dd>
-                </div>
-                <div>
-                  <dt>身份保持</dt>
-                  <dd>强制首位</dd>
-                </div>
-                <div>
-                  <dt>绑定策略</dt>
-                  <dd>版本锁定</dd>
-                </div>
-              </dl>
-            </section>
-
-            <section className="studio-card prompt-card">
-              <div className="card-kicker">
-                <span>PROMPT TRACE</span>
-                <FileText size={15} />
-              </div>
-              <h2>结构化 Prompt</h2>
-              {stage === "source" ? (
-                <div className="empty-prompt">
-                  <strong>尚未编译</strong>
-                  <span>编译不会调用模型，也不会产生费用。</span>
-                  <button className="demo-primary" onClick={compilePrompt}>
-                    <WandSparkles size={16} /> 编译 Prompt
-                  </button>
-                </div>
-              ) : (
-                <div className="compiled-prompt">
-                  <div>
-                    <Check size={14} /> Identity 排在第一位
-                    <code>sha256:55d99855c775</code>
-                  </div>
-                  <p>
-                    [01 · IDENTITY PRESERVATION] Preserve the subject&apos;s exact
-                    identity with very high fidelity. Maintain facial geometry,
-                    apparent age, skin tone and distinctive natural
-                    characteristics…
-                  </p>
-                  <span>DNA 1.0 · Compiler 1.0.0 · 17 个模块版本已锁定</span>
-                </div>
-              )}
-            </section>
-
-            <section className="studio-card generation-card">
-              <div className="card-kicker">
-                <span>GENERATION ORCHESTRATOR</span>
-                <Sparkles size={15} />
-              </div>
-              <h2>生成任务</h2>
-              <div className="provider-row">
-                <span>Provider</span>
-                <strong>Mock Portrait Provider</strong>
-              </div>
-              <p>演示环境使用几何人物图形，不调用真实模型。</p>
-              <button
-                className="demo-primary"
-                disabled={stage === "source"}
-                onClick={generateCandidates}
-              >
-                <Sparkles size={16} />
-                {stage === "review" ? "重新生成 4 张" : "生成 4 张候选"}
-              </button>
-            </section>
-
-            <section className="studio-card review-card">
-              <div className="card-kicker">
-                <span>INTERNAL REVIEW</span>
-                <span>{previewCount} / 2 预览</span>
-              </div>
-              <h2>候选审核</h2>
-              {stage === "source" || stage === "compiled" ? (
-                <div className="review-empty">
-                  <Layers3 size={24} />
-                  <strong>还没有候选图</strong>
-                  <span>先编译 Prompt，再运行 Mock Provider。</span>
-                </div>
-              ) : (
-                <div className="candidate-grid">
-                  {candidates.map((candidate) => (
-                    <article
-                      key={candidate.id}
-                      className={`candidate-card is-${candidate.status}`}
-                    >
-                      <PortraitVisual tone={candidate.tone} compact />
-                      <div className="candidate-meta">
-                        <span>#{String(candidate.id).padStart(2, "0")}</span>
-                        <strong>{candidate.score}</strong>
-                      </div>
-                      <small>
-                        {candidate.status === "pending"
-                          ? "待审核"
-                          : candidate.status === "approved"
-                            ? "已通过"
-                            : candidate.status === "preview"
-                              ? "客户预览"
-                              : "客户选中"}
-                      </small>
-                      {candidate.status === "pending" && (
-                        <button onClick={() => approveCandidate(candidate.id)}>
-                          <Check size={14} /> 通过
-                        </button>
-                      )}
-                      {candidate.status === "approved" && (
-                        <button onClick={() => togglePreview(candidate.id)}>
-                          选为预览
-                        </button>
-                      )}
-                      {candidate.status === "preview" && stage === "review" && (
-                        <button onClick={() => togglePreview(candidate.id)}>
-                          取消预览
-                        </button>
-                      )}
-                    </article>
-                  ))}
-                </div>
-              )}
-              {stage === "review" && (
-                <button
-                  className="demo-primary send-button"
-                  disabled={previewCount !== 2}
-                  onClick={sendPreview}
-                >
-                  <Send size={16} /> 准备两张客户预览
-                </button>
-              )}
-            </section>
-
-            <section className="studio-card customer-card">
-              <div className="card-kicker">
-                <span>CUSTOMER DECISION</span>
-                <ClipboardCheck size={15} />
-              </div>
-              <h2>记录客户选择</h2>
-              {stage === "preview" ||
-              stage === "selected" ||
-              stage === "delivered" ? (
-                <>
-                  <div className="preview-grid">
-                    {previewCandidates.map((candidate, index) => (
-                      <button
-                        key={candidate.id}
-                        className={
-                          candidate.status === "selected" ? "is-selected" : ""
-                        }
-                        onClick={() => selectFinal(candidate.id)}
-                        disabled={stage === "delivered"}
-                      >
-                        <PortraitVisual tone={candidate.tone} compact />
-                        <span>预览 {index + 1}</span>
-                        {candidate.status === "selected" && <Check size={16} />}
-                      </button>
-                    ))}
-                  </div>
-                  <label>
-                    客户反馈
-                    <textarea
-                      readOnly
-                      value={
-                        stage === "preview"
-                          ? "请点击上方任意一张预览，模拟客户最终选择。"
-                          : "选择第一张，更像本人，整体自然且职业。"
-                      }
-                    />
-                  </label>
-                </>
-              ) : (
-                <div className="review-empty compact">
-                  <Send size={22} />
-                  <strong>等待两张预览</strong>
-                  <span>客户只能从人工筛选后的预览中选择。</span>
-                </div>
-              )}
-            </section>
-
-            <section className="studio-card delivery-card">
-              <div className="card-kicker">
-                <span>FINAL OUTPUT</span>
-                <Download size={15} />
-              </div>
-              <h2>最终文件</h2>
-              {stage === "selected" || stage === "delivered" ? (
-                <>
-                  <div className="output-formats">
-                    {["HD JPG", "HD PNG", "1:1", "4:5", "简历竖版", "白底", "压缩 JPG"].map(
-                      (format) => (
-                        <span key={format}>
-                          <Check size={12} /> {format}
-                        </span>
-                      ),
-                    )}
-                  </div>
-                  <button
-                    className="demo-primary export-button"
-                    onClick={exportDelivery}
-                    disabled={stage === "delivered"}
-                  >
-                    <Download size={16} />
-                    {stage === "delivered"
-                      ? "交付包已生成"
-                      : "模拟导出无水印高清 ZIP"}
-                  </button>
-                </>
-              ) : (
-                <div className="review-empty compact">
-                  <Download size={22} />
-                  <strong>尚未确定最终照片</strong>
-                  <span>记录客户选择后即可导出。</span>
-                </div>
-              )}
-            </section>
-          </div>
-
-          <section className="demo-finish-bar">
-            <div>
-              <span className={`finish-dot stage-${stage}`} />
-              <strong>{toast}</strong>
-            </div>
-            <button onClick={resetDemo}>
-              <RefreshCw size={15} /> 重置演示
-            </button>
-          </section>
+          ) : job ? (
+            <JobWorkspace
+              job={job}
+              session={session}
+              onJob={updateJob}
+              onClear={() => {
+                localStorage.removeItem(jobStorageKey);
+                setJob(null);
+              }}
+            />
+          ) : (
+            <>
+              {loadError && <div className="inline-error load-error">{loadError}</div>}
+              <UploadOrder onCreated={updateJob} />
+            </>
+          )}
         </main>
       </div>
     </div>
   );
 }
 
-function DemoApp() {
-  const [view, setView] = useState<"landing" | "studio">("landing");
-  return view === "landing" ? (
-    <Landing onEnter={() => setView("studio")} />
-  ) : (
-    <Studio onBack={() => setView("landing")} />
+function App() {
+  const [view, setView] = useState<"landing" | "login" | "studio">("landing");
+  const [session, setSession] = useState<SessionStatus | null>(null);
+
+  useEffect(() => {
+    getSession().then(setSession).catch(() => undefined);
+  }, []);
+
+  async function enter() {
+    const latest = await getSession().catch(() => session);
+    if (!latest) return;
+    setSession(latest);
+    setView(latest.authenticated ? "studio" : "login");
+  }
+
+  if (view === "landing") return <Landing onEnter={enter} />;
+  if (!session) {
+    return (
+      <div className="page-loading">
+        <LoaderCircle className="spin" /> 正在检查生产环境…
+      </div>
+    );
+  }
+  if (view === "login") {
+    return (
+      <Login
+        session={session}
+        onBack={() => setView("landing")}
+        onAuthenticated={async () => {
+          const latest = await getSession();
+          setSession(latest);
+          setView("studio");
+        }}
+      />
+    );
+  }
+  return (
+    <Studio
+      session={session}
+      onSession={(next) => {
+        setSession(next);
+        if (!next.authenticated) setView("login");
+      }}
+      onBack={() => setView("landing")}
+    />
   );
 }
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <DemoApp />
+    <App />
   </React.StrictMode>,
 );
