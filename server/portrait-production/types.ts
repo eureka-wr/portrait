@@ -73,3 +73,20 @@ export type SafePortraitJob = Omit<PortraitJob, "source" | "candidates" | "deliv
     url: string;
   };
 };
+
+export type SafePortraitJobSummary = Pick<
+  PortraitJob,
+  | "id"
+  | "orderNo"
+  | "createdAt"
+  | "updatedAt"
+  | "customerName"
+  | "channel"
+  | "status"
+  | "error"
+> & {
+  candidateCount: number;
+  approvedCount: number;
+  hasSelection: boolean;
+  deliveryReady: boolean;
+};

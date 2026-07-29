@@ -3,6 +3,7 @@ import type {
   PortraitCandidate,
   PortraitJob,
   SafePortraitJob,
+  SafePortraitJobSummary,
 } from "./types.js";
 import { HttpError } from "./auth.js";
 
@@ -94,6 +95,63 @@ export async function loadJob(jobId: string) {
   return json as PortraitJob;
 }
 
+export async function listJobs(limit = 100) {
+  const latestByJob = new Map<
+    string,
+    { pathname: string; uploadedAt: Date }
+  >();
+  let cursor: string | undefined;
+  let pageCount = 0;
+
+  do {
+    const result = await list({
+      prefix: `${ROOT}/jobs/`,
+      limit: 1000,
+      cursor,
+    });
+    for (const blob of result.blobs) {
+      const match = blob.pathname.match(
+        /^portrait-production\/jobs\/([0-9a-f-]{36})\/state\/[^/]+\.json$/i,
+      );
+      if (!match) continue;
+      const current = latestByJob.get(match[1]);
+      if (!current || blob.pathname.localeCompare(current.pathname) > 0) {
+        latestByJob.set(match[1], {
+          pathname: blob.pathname,
+          uploadedAt: blob.uploadedAt,
+        });
+      }
+    }
+    cursor = result.hasMore ? result.cursor : undefined;
+    pageCount += 1;
+  } while (cursor && pageCount < 20);
+
+  const latestObjects = [...latestByJob.values()]
+    .sort(
+      (left, right) =>
+        right.uploadedAt.getTime() - left.uploadedAt.getTime(),
+    )
+    .slice(0, Math.max(1, Math.min(limit, 100)));
+  const jobs: PortraitJob[] = [];
+
+  for (let index = 0; index < latestObjects.length; index += 10) {
+    const batch = latestObjects.slice(index, index + 10);
+    const results = await Promise.allSettled(
+      batch.map(async ({ pathname }) => {
+        const object = await readPrivate(pathname);
+        return (await new Response(object.stream).json()) as PortraitJob;
+      }),
+    );
+    for (const result of results) {
+      if (result.status === "fulfilled") jobs.push(result.value);
+    }
+  }
+
+  return jobs.sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
+}
+
 export function toSafeJob(job: PortraitJob): SafePortraitJob {
   const publicJob = Object.fromEntries(
     Object.entries(job).filter(
@@ -141,6 +199,27 @@ export function toSafeJob(job: PortraitJob): SafePortraitJob {
   }
 
   return safe;
+}
+
+export function toSafeJobSummary(
+  job: PortraitJob,
+): SafePortraitJobSummary {
+  return {
+    id: job.id,
+    orderNo: job.orderNo,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    customerName: job.customerName,
+    channel: job.channel,
+    status: job.status,
+    error: job.error,
+    candidateCount: job.candidates.length,
+    approvedCount: job.candidates.filter((candidate) =>
+      ["approved", "selected"].includes(candidate.status),
+    ).length,
+    hasSelection: Boolean(job.selectedCandidateId),
+    deliveryReady: Boolean(job.delivery),
+  };
 }
 
 export function resolveJobAsset(job: PortraitJob, asset: string) {

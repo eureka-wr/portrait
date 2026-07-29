@@ -13,11 +13,13 @@ import {
 } from "../server/portrait-production/generation.js";
 import {
   deleteJobAssets,
+  listJobs,
   loadJob,
   putPrivate,
   saveJob,
   sourceAssetPath,
   toSafeJob,
+  toSafeJobSummary,
 } from "../server/portrait-production/store.js";
 import type {
   CandidateStatus,
@@ -280,7 +282,15 @@ async function handle(request: Request) {
     requireAuthentication(request);
 
     if (request.method === "GET") {
-      const jobId = new URL(request.url).searchParams.get("jobId") ?? "";
+      const url = new URL(request.url);
+      if (url.searchParams.get("view") === "list") {
+        const jobs = await listJobs();
+        return Response.json(
+          { jobs: jobs.map(toSafeJobSummary) },
+          { headers: { "Cache-Control": "no-store" } },
+        );
+      }
+      const jobId = url.searchParams.get("jobId") ?? "";
       const job = await loadJob(jobId);
       return Response.json(
         { job: toSafeJob(job) },

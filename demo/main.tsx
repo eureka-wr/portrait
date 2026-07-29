@@ -4,14 +4,17 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
+  ChevronRight,
   ChevronLeft,
   CircleAlert,
   Download,
   FileArchive,
   Image as ImageIcon,
+  List as ListIcon,
   LoaderCircle,
   LockKeyhole,
   LogOut,
+  Plus,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -84,6 +87,21 @@ type PortraitJob = {
     url: string;
   };
   error?: string;
+};
+
+type PortraitJobSummary = {
+  id: string;
+  orderNo: string;
+  createdAt: string;
+  updatedAt: string;
+  customerName: string;
+  channel: string;
+  status: JobStatus;
+  error?: string;
+  candidateCount: number;
+  approvedCount: number;
+  hasSelection: boolean;
+  deliveryReady: boolean;
 };
 
 type SessionStatus = {
@@ -211,6 +229,35 @@ async function fetchPortraitJob(jobId: string) {
   return payload.job;
 }
 
+async function fetchPortraitJobs() {
+  const payload = await readJson<{ jobs: PortraitJobSummary[] }>(
+    await fetch("/api/studio?view=list", {
+      credentials: "include",
+      cache: "no-store",
+    }),
+  );
+  return payload.jobs;
+}
+
+function summarizePortraitJob(job: PortraitJob): PortraitJobSummary {
+  return {
+    id: job.id,
+    orderNo: job.orderNo,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    customerName: job.customerName,
+    channel: job.channel,
+    status: job.status,
+    error: job.error,
+    candidateCount: job.candidates.length,
+    approvedCount: job.candidates.filter((candidate) =>
+      ["approved", "selected"].includes(candidate.status),
+    ).length,
+    hasSelection: Boolean(job.selectedCandidateId),
+    deliveryReady: Boolean(job.delivery),
+  };
+}
+
 async function compressPhoto(file: File) {
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
     throw new Error("请选择 JPEG、PNG 或 WebP 照片。");
@@ -242,7 +289,15 @@ async function compressPhoto(file: File) {
   });
 }
 
-function Landing({ onEnter }: { onEnter: () => void }) {
+function Landing({
+  onEnter,
+  entering,
+  entryError,
+}: {
+  onEnter: () => void;
+  entering: boolean;
+  entryError: string;
+}) {
   return (
     <div className="landing">
       <header className="public-nav">
@@ -280,14 +335,28 @@ function Landing({ onEnter }: { onEnter: () => void }) {
             6 种常用规格；原图与结果均存放在私有空间。
           </p>
           <div className="hero-actions">
-            <button className="primary large" onClick={onEnter}>
-              进入生产工作台 <ArrowRight size={18} />
+            <button
+              className="primary large"
+              onClick={onEnter}
+              disabled={entering}
+            >
+              {entering ? (
+                <LoaderCircle className="spin" size={18} />
+              ) : (
+                <ArrowRight size={18} />
+              )}
+              {entering ? "正在检查工作台…" : "进入生产工作台"}
             </button>
             <span className="price">
               <strong>4 张</strong>
               <small>一次生成 · 人工定稿</small>
             </span>
           </div>
+          {entryError && (
+            <div className="inline-error entry-error">
+              <CircleAlert size={15} /> {entryError}
+            </div>
+          )}
           <div className="trust-row">
             <span>
               <ShieldCheck size={16} /> 身份保持优先
@@ -341,7 +410,7 @@ function Login({
   onBack,
 }: {
   session: SessionStatus;
-  onAuthenticated: () => void;
+  onAuthenticated: () => Promise<void>;
   onBack: () => void;
 }) {
   const [accessKey, setAccessKey] = useState("");
@@ -365,7 +434,7 @@ function Login({
           body: JSON.stringify({ accessKey }),
         }),
       );
-      onAuthenticated();
+      await onAuthenticated();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "登录失败。");
     } finally {
@@ -382,7 +451,10 @@ function Login({
         <BrandMark />
         <p className="eyebrow">PRIVATE PRODUCTION WORKSPACE</p>
         <h1>进入职业肖像工作台</h1>
-        <p>照片和模型费用受访问口令保护。登录会话仅保存在安全 Cookie 中。</p>
+        <p>
+          照片和模型费用受访问口令保护。请输入部署时设置的工作台口令（不是 OpenAI
+          API Key）；登录会话仅保存在安全 Cookie 中。
+        </p>
 
         <div className="readiness-list">
           {[
@@ -736,11 +808,13 @@ function JobWorkspace({
   session,
   onJob,
   onClear,
+  onBackToOrders,
 }: {
   job: PortraitJob;
   session: SessionStatus;
   onJob: (job: PortraitJob) => void;
   onClear: () => void;
+  onBackToOrders: () => void;
 }) {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState(
@@ -810,6 +884,9 @@ function JobWorkspace({
     <>
       <section className="job-head">
         <div>
+          <button className="job-back" onClick={onBackToOrders}>
+            <ChevronLeft size={15} /> 返回全部订单
+          </button>
           <p className="eyebrow">CATV-{job.orderNo}</p>
           <h1>{job.customerName || "未命名客户"} · 职业肖像生产</h1>
           <span>
@@ -1092,6 +1169,142 @@ function JobWorkspace({
   );
 }
 
+function formatOrderTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "时间未知";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function OrdersHome({
+  jobs,
+  error,
+  refreshing,
+  openingJobId,
+  onCreate,
+  onOpen,
+  onRefresh,
+}: {
+  jobs: PortraitJobSummary[];
+  error: string;
+  refreshing: boolean;
+  openingJobId: string;
+  onCreate: () => void;
+  onOpen: (job: PortraitJobSummary) => void;
+  onRefresh: () => void;
+}) {
+  const workingCount = jobs.filter((job) =>
+    ["ready", "generating", "failed"].includes(job.status),
+  ).length;
+  const reviewCount = jobs.filter((job) => job.status === "review").length;
+  const deliveredCount = jobs.filter((job) => job.status === "delivered").length;
+
+  return (
+    <section className="orders-home">
+      <header className="orders-heading">
+        <div>
+          <p className="eyebrow">SINGLE OPERATOR · MULTI-ORDER</p>
+          <h1>订单工作台</h1>
+          <p>在一处接单、切换生产任务、审核候选并完成交付。</p>
+        </div>
+        <button className="primary" onClick={onCreate}>
+          <Plus size={17} /> 创建新订单
+        </button>
+      </header>
+
+      <div className="order-stats">
+        {[
+          ["全部订单", jobs.length],
+          ["待处理 / 生成中", workingCount],
+          ["等待人工审核", reviewCount],
+          ["已完成交付", deliveredCount],
+        ].map(([label, value]) => (
+          <article key={String(label)}>
+            <strong>{value}</strong>
+            <span>{label}</span>
+          </article>
+        ))}
+      </div>
+
+      <section className="panel order-list-panel">
+        <div className="order-list-head">
+          <div>
+            <span>全部生产订单</span>
+            <small>按最近更新时间排序</small>
+          </div>
+          <button onClick={onRefresh} disabled={refreshing}>
+            <RefreshCw className={refreshing ? "spin" : ""} size={14} />
+            {refreshing ? "刷新中" : "刷新"}
+          </button>
+        </div>
+        {error && (
+          <div className="inline-error load-error">
+            <CircleAlert size={15} /> {error}
+          </div>
+        )}
+        {jobs.length === 0 ? (
+          <div className="orders-empty">
+            <span>
+              <ImageIcon size={24} />
+            </span>
+            <strong>还没有生产订单</strong>
+            <p>创建第一份订单，上传客户原图后即可开始生成四种职业形象。</p>
+            <button className="primary" onClick={onCreate}>
+              <Plus size={16} /> 创建第一份订单
+            </button>
+          </div>
+        ) : (
+          <div className="order-list">
+            {jobs.map((job) => (
+              <button
+                className="order-row"
+                key={job.id}
+                onClick={() => onOpen(job)}
+                disabled={openingJobId === job.id}
+              >
+                <span className={`order-state status-${job.status}`}>
+                  {["generating", "delivering"].includes(job.status) ? (
+                    <LoaderCircle className="spin" size={15} />
+                  ) : (
+                    <i />
+                  )}
+                </span>
+                <span className="order-customer">
+                  <strong>{job.customerName || "未命名客户"}</strong>
+                  <small>CATV-{job.orderNo}</small>
+                </span>
+                <span className="order-channel">
+                  <strong>{job.channel}</strong>
+                  <small>{formatOrderTime(job.updatedAt)} 更新</small>
+                </span>
+                <span className="order-progress">
+                  <strong>{statusLabels[job.status]}</strong>
+                  <small>
+                    {job.candidateCount > 0
+                      ? `${job.approvedCount}/${job.candidateCount} 张通过`
+                      : "候选图尚未生成"}
+                  </small>
+                </span>
+                <span className="order-open">
+                  {openingJobId === job.id ? (
+                    <LoaderCircle className="spin" size={17} />
+                  ) : (
+                    <ChevronRight size={17} />
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
 function Studio({
   session,
   onSession,
@@ -1101,41 +1314,83 @@ function Studio({
   onSession: (session: SessionStatus) => void;
   onBack: () => void;
 }) {
-  const [job, setJob] = useState<PortraitJob | null>(null);
   const [storedJobId] = useState(() => localStorage.getItem(jobStorageKey));
-  const [loadingJob, setLoadingJob] = useState(Boolean(storedJobId));
+  const [studioView, setStudioView] = useState<"orders" | "create" | "job">(
+    storedJobId ? "job" : "orders",
+  );
+  const [jobs, setJobs] = useState<PortraitJobSummary[]>([]);
+  const [job, setJob] = useState<PortraitJob | null>(null);
+  const [loadingWorkspace, setLoadingWorkspace] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [openingJobId, setOpeningJobId] = useState("");
   const [loadError, setLoadError] = useState("");
   const pollingJobId =
     job && ["generating", "delivering"].includes(job.status) ? job.id : null;
 
   const updateJob = useCallback((next: PortraitJob) => {
+    const summary = summarizePortraitJob(next);
     setJob(next);
+    setJobs((current) =>
+      [summary, ...current.filter((item) => item.id !== next.id)].sort((a, b) =>
+        b.updatedAt.localeCompare(a.updatedAt),
+      ),
+    );
     localStorage.setItem(jobStorageKey, next.id);
   }, []);
 
+  const refreshOrders = useCallback(async (showActivity = true) => {
+    if (showActivity) setRefreshing(true);
+    try {
+      const latest = await fetchPortraitJobs();
+      setJobs(latest);
+      setLoadError("");
+    } catch (cause) {
+      setLoadError(
+        cause instanceof Error ? cause.message : "订单列表暂时无法读取。",
+      );
+    } finally {
+      if (showActivity) setRefreshing(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!storedJobId) return;
     let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void fetchPortraitJob(storedJobId)
-        .then((restored) => {
-          if (cancelled) return;
-          updateJob(restored);
-          setLoadError("");
-        })
-        .catch((cause: unknown) => {
-          if (cancelled) return;
-          localStorage.removeItem(jobStorageKey);
-          setJob(null);
-          setLoadError(cause instanceof Error ? cause.message : "订单恢复失败。");
-        })
-        .finally(() => {
-          if (!cancelled) setLoadingJob(false);
-        });
-    }, 0);
+    void Promise.allSettled([
+      fetchPortraitJobs(),
+      storedJobId ? fetchPortraitJob(storedJobId) : Promise.resolve(null),
+    ]).then(([jobsResult, restoredResult]) => {
+      if (cancelled) return;
+      if (jobsResult.status === "fulfilled") {
+        setJobs(jobsResult.value);
+      } else {
+        setLoadError(
+          jobsResult.reason instanceof Error
+            ? jobsResult.reason.message
+            : "订单列表暂时无法读取。",
+        );
+      }
+
+      if (restoredResult.status === "fulfilled" && restoredResult.value) {
+        updateJob(restoredResult.value);
+        setStudioView("job");
+      } else if (storedJobId) {
+        localStorage.removeItem(jobStorageKey);
+        setJob(null);
+        setStudioView("orders");
+        if (restoredResult.status === "rejected") {
+          setLoadError(
+            restoredResult.reason instanceof Error
+              ? `上次订单无法恢复：${restoredResult.reason.message}`
+              : "上次订单无法恢复，已返回全部订单。",
+          );
+        }
+      } else {
+        setStudioView("orders");
+      }
+      setLoadingWorkspace(false);
+    });
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
   }, [storedJobId, updateJob]);
 
@@ -1148,6 +1403,41 @@ function Studio({
     }, 5_000);
     return () => window.clearInterval(timer);
   }, [pollingJobId, updateJob]);
+
+  useEffect(() => {
+    if (studioView !== "orders") return;
+    const timer = window.setInterval(() => {
+      void refreshOrders(false);
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [refreshOrders, studioView]);
+
+  async function openJob(summary: PortraitJobSummary) {
+    setOpeningJobId(summary.id);
+    setLoadError("");
+    try {
+      const selected = await fetchPortraitJob(summary.id);
+      updateJob(selected);
+      setStudioView("job");
+    } catch (cause) {
+      setLoadError(cause instanceof Error ? cause.message : "订单打开失败。");
+    } finally {
+      setOpeningJobId("");
+    }
+  }
+
+  function showOrders() {
+    localStorage.removeItem(jobStorageKey);
+    setStudioView("orders");
+    void refreshOrders(false);
+  }
+
+  function showCreate() {
+    localStorage.removeItem(jobStorageKey);
+    setJob(null);
+    setLoadError("");
+    setStudioView("create");
+  }
 
   async function logout() {
     await fetch("/api/session", {
@@ -1169,9 +1459,24 @@ function Studio({
         </button>
         <nav>
           <span>生产</span>
-          <button className="is-active">
-            <ImageIcon size={17} /> 当前订单
+          <button
+            className={studioView === "orders" ? "is-active" : ""}
+            onClick={showOrders}
+          >
+            <ListIcon size={17} /> 全部订单
+            {jobs.length > 0 && <b className="nav-count">{jobs.length}</b>}
           </button>
+          <button
+            className={studioView === "create" ? "is-active" : ""}
+            onClick={showCreate}
+          >
+            <Plus size={17} /> 创建新订单
+          </button>
+          {job && studioView === "job" && (
+            <button className="is-active">
+              <ImageIcon size={17} /> 当前订单
+            </button>
+          )}
           <span>安全</span>
           <div>
             <ShieldCheck size={17} />
@@ -1194,7 +1499,7 @@ function Studio({
 
       <div className="studio-main">
         <header className="studio-topbar">
-          <span>人工生产空间 · Phase 01</span>
+          <span>单人运营生产空间 · Phase 01</span>
           <div>
             <LockKeyhole size={14} />
             私有会话
@@ -1202,25 +1507,50 @@ function Studio({
           </div>
         </header>
         <main className="workspace">
-          {loadingJob ? (
+          {loadingWorkspace ? (
             <div className="workspace-loading">
-              <LoaderCircle className="spin" size={22} /> 正在恢复生产订单…
+              <LoaderCircle className="spin" size={22} /> 正在读取生产订单…
             </div>
+          ) : studioView === "orders" ? (
+            <OrdersHome
+              jobs={jobs}
+              error={loadError}
+              refreshing={refreshing}
+              openingJobId={openingJobId}
+              onCreate={showCreate}
+              onOpen={openJob}
+              onRefresh={() => void refreshOrders()}
+            />
+          ) : studioView === "create" ? (
+            <UploadOrder
+              onCreated={(created) => {
+                updateJob(created);
+                setStudioView("job");
+              }}
+            />
           ) : job ? (
             <JobWorkspace
               job={job}
               session={session}
               onJob={updateJob}
+              onBackToOrders={showOrders}
               onClear={() => {
                 localStorage.removeItem(jobStorageKey);
                 setJob(null);
+                setStudioView("orders");
+                void refreshOrders(false);
               }}
             />
           ) : (
-            <>
-              {loadError && <div className="inline-error load-error">{loadError}</div>}
-              <UploadOrder onCreated={updateJob} />
-            </>
+            <OrdersHome
+              jobs={jobs}
+              error={loadError}
+              refreshing={refreshing}
+              openingJobId={openingJobId}
+              onCreate={showCreate}
+              onOpen={openJob}
+              onRefresh={() => void refreshOrders()}
+            />
           )}
         </main>
       </div>
@@ -1231,19 +1561,44 @@ function Studio({
 function App() {
   const [view, setView] = useState<"landing" | "login" | "studio">("landing");
   const [session, setSession] = useState<SessionStatus | null>(null);
+  const [entryBusy, setEntryBusy] = useState(false);
+  const [entryError, setEntryError] = useState("");
 
   useEffect(() => {
     getSession().then(setSession).catch(() => undefined);
   }, []);
 
   async function enter() {
-    const latest = await getSession().catch(() => session);
-    if (!latest) return;
-    setSession(latest);
-    setView(latest.authenticated ? "studio" : "login");
+    setEntryBusy(true);
+    setEntryError("");
+    try {
+      const latest = await getSession();
+      setSession(latest);
+      setView(latest.authenticated ? "studio" : "login");
+    } catch (cause) {
+      if (session) {
+        setView(session.authenticated ? "studio" : "login");
+      } else {
+        setEntryError(
+          cause instanceof Error
+            ? `工作台连接失败：${cause.message}`
+            : "工作台暂时无法连接，请稍后重试。",
+        );
+      }
+    } finally {
+      setEntryBusy(false);
+    }
   }
 
-  if (view === "landing") return <Landing onEnter={enter} />;
+  if (view === "landing") {
+    return (
+      <Landing
+        onEnter={enter}
+        entering={entryBusy}
+        entryError={entryError}
+      />
+    );
+  }
   if (!session) {
     return (
       <div className="page-loading">

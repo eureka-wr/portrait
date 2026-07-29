@@ -8,6 +8,7 @@ import {
 import {
   resolveJobAsset,
   toSafeJob,
+  toSafeJobSummary,
 } from "../server/portrait-production/store";
 import type { PortraitJob } from "../server/portrait-production/types";
 import { buildPortraitProductionPrompts } from "../server/portrait-production/generation";
@@ -116,6 +117,20 @@ describe("private asset contract", () => {
     expect(() => resolveJobAsset(job, "candidate:unknown")).toThrow(
       "订单中没有找到这个资产。",
     );
+  });
+
+  it("returns private-path-free summaries for the multi-order workspace", () => {
+    const summary = toSafeJobSummary(sampleJob());
+    expect(summary).toMatchObject({
+      customerName: "测试客户",
+      status: "review",
+      candidateCount: 1,
+      approvedCount: 1,
+      hasSelection: false,
+      deliveryReady: false,
+    });
+    expect(JSON.stringify(summary)).not.toContain("pathname");
+    expect(JSON.stringify(summary)).not.toContain("portrait-production/jobs/");
   });
 });
 
