@@ -38,21 +38,42 @@ test("operator can complete the phase-one portrait workflow", async ({
     page.getByRole("heading", { name: "Playwright 验收客户" }),
   ).toBeVisible();
   await expect(page.getByText("待生成", { exact: true })).toBeVisible();
+  await expect(page.getByText(/DNA v2\.\d+/)).toBeVisible();
 
   await page.getByRole("button", { name: "编译 Prompt" }).click();
   await expect(page.getByText("Identity 排在第一位")).toBeVisible();
+  await expect(page.getByText(/Negative 最后一位 · 20 模块/)).toBeVisible();
 
   await page.getByRole("button", { name: "生成 4 张候选" }).click();
   const candidates = page.getByRole("article");
   await expect(candidates).toHaveCount(4);
 
   for (let index = 0; index < 2; index += 1) {
+    await candidates
+      .nth(index)
+      .getByText("Pose · Gaze · Presence · Hair 审核")
+      .click();
+    const checklist = candidates.nth(index).getByRole("checkbox");
+    const checklistCount = await checklist.count();
+    for (let item = 0; item < checklistCount; item += 1) {
+      await checklist.nth(item).check();
+    }
     await candidates.nth(index).getByRole("button", { name: "通过" }).click();
     await candidates
       .nth(index)
       .getByRole("button", { name: "选为预览" })
       .click();
   }
+
+  await candidates
+    .nth(2)
+    .getByText("Pose · Gaze · Presence · Hair 审核")
+    .click();
+  await candidates
+    .nth(2)
+    .getByLabel("淘汰原因")
+    .selectOption("weak_presence");
+  await candidates.nth(2).getByRole("button", { name: "淘汰" }).click();
 
   await expect(page.getByText("2 / 2", { exact: true })).toBeVisible();
   await page

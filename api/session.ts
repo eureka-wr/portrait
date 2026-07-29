@@ -20,7 +20,7 @@ function status(request: Request) {
         provider: providerConfigured(),
         storage: storageConfigured(),
       },
-      model: process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-1.5",
+      model: process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-2",
     },
     {
       headers: {

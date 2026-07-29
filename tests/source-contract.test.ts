@@ -28,4 +28,17 @@ describe("production safety contracts", () => {
     expect(envExample).toContain("ENABLE_PORTRAIT_SELF_SERVICE=false");
     expect(envExample).toContain("ENABLE_PORTRAIT_ONLINE_PAYMENT=false");
   });
+
+  it("uses GPT Image 2 across both production runtimes", () => {
+    const modelSources = [
+      read(".env.example"),
+      read("api/session.ts"),
+      read("server/portrait-production/generation.ts"),
+      read("src/modules/portrait/database/repository.ts"),
+      read("src/modules/portrait/providers/provider.ts"),
+    ].join("\n");
+
+    expect(modelSources).toContain("gpt-image-2");
+    expect(modelSources).not.toContain("gpt-image-1.5");
+  });
 });

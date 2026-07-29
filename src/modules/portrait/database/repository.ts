@@ -1,5 +1,8 @@
 import { env } from "cloudflare:workers";
-import { PORTRAIT_STYLES } from "../domain/catalog";
+import {
+  PORTRAIT_STYLES,
+  PORTRAIT_STYLE_VERSIONS,
+} from "../domain/catalog";
 import type {
   AuditLog,
   CompiledPrompt,
@@ -7,6 +10,7 @@ import type {
   PortraitAsset,
   PortraitCandidate,
   PortraitOrder,
+  PortraitStyle,
   PromptModuleRecord,
   StudioState,
 } from "../domain/types";
@@ -63,6 +67,7 @@ const schemaStatements = [
     id TEXT PRIMARY KEY,
     style_id TEXT NOT NULL,
     version TEXT NOT NULL,
+    engine_version TEXT NOT NULL DEFAULT '1.0',
     status TEXT NOT NULL,
     modules_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -76,6 +81,7 @@ const schemaStatements = [
     name TEXT NOT NULL,
     category TEXT NOT NULL,
     version TEXT NOT NULL,
+    engine_version TEXT NOT NULL DEFAULT '1.0',
     positive_prompt TEXT NOT NULL,
     negative_prompt TEXT,
     parameters_json TEXT NOT NULL DEFAULT '{}',
@@ -130,8 +136,10 @@ const schemaStatements = [
     negative_prompt TEXT NOT NULL,
     structured_payload_json TEXT NOT NULL DEFAULT '{}',
     module_versions_json TEXT NOT NULL,
+    module_order_json TEXT NOT NULL DEFAULT '[]',
     portrait_dna_id TEXT NOT NULL,
     portrait_dna_version TEXT NOT NULL,
+    engine_version TEXT NOT NULL DEFAULT '1.0',
     compiler_version TEXT NOT NULL,
     checksum TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -165,6 +173,8 @@ const schemaStatements = [
     operator_notes TEXT,
     rejection_reasons_json TEXT NOT NULL DEFAULT '[]',
     quality_score REAL,
+    quality_score_json TEXT NOT NULL DEFAULT '{}',
+    review_checklist_json TEXT NOT NULL DEFAULT '{}',
     variant INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -216,57 +226,46 @@ const schemaStatements = [
 
 async function seedCatalog() {
   const db = getPortraitDb();
-  const existing = await db
-    .prepare("SELECT COUNT(*) AS count FROM portrait_styles")
-    .first<{ count: number }>();
-  if ((existing?.count ?? 0) > 0) return;
-
   const now = new Date().toISOString();
-  const statements: D1PreparedStatement[] = [];
-  for (const style of PORTRAIT_STYLES) {
-    statements.push(
-      db
-        .prepare(
-          `INSERT INTO portrait_styles
-          (id, slug, public_name, public_name_zh, internal_reference_name, description, current_version, status, accent, traits_json, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(
-          style.id,
-          style.slug,
-          style.publicName,
-          style.publicNameZh,
-          style.internalReferenceName,
-          style.description,
-          style.version,
-          style.status,
-          style.accent,
-          JSON.stringify(style.traits),
-          now,
-          now,
-        ),
-    );
-
+  await db.batch([
+    db.prepare(
+      "UPDATE portrait_dna_versions SET status = 'retired', updated_at = CURRENT_TIMESTAMP WHERE version LIKE '1.%' AND status = 'active'",
+    ),
+    db.prepare(
+      "UPDATE prompt_modules SET status = 'retired', updated_at = CURRENT_TIMESTAMP WHERE engine_version = '1.0' AND status = 'active'",
+    ),
+  ]);
+  for (const style of PORTRAIT_STYLE_VERSIONS) {
     const moduleRefs: Record<string, string> = {};
+    const statements: D1PreparedStatement[] = [];
     for (const [category, content] of Object.entries(style.modules)) {
       if (!content) continue;
-      const moduleId = `${style.id}_${category}_v1`;
+      const versionKey = style.version.replaceAll(".", "_");
+      const moduleId = `${style.id}_${category}_v${versionKey}`;
       const slug = `${style.slug}-${category}`;
-      moduleRefs[category] = `${moduleId}@1.0`;
+      moduleRefs[category] = `${moduleId}@${style.version}`;
       statements.push(
         db
           .prepare(
-            `INSERT INTO prompt_modules
-            (id, slug, name, category, version, positive_prompt, negative_prompt, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, '1.0', ?, ?, 'active', ?, ?)`,
+            `INSERT OR IGNORE INTO prompt_modules
+            (id, slug, name, category, version, engine_version, positive_prompt, negative_prompt, parameters_json, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             moduleId,
             slug,
             `${style.publicName} · ${category}`,
             category,
+            style.version,
+            style.engineVersion,
             category === "negative" ? "" : content,
             category === "negative" ? content : null,
+            JSON.stringify(
+              style.parameters?.[
+                category as keyof NonNullable<PortraitStyle["parameters"]>
+              ] ?? {},
+            ),
+            style.status,
             now,
             now,
           ),
@@ -275,24 +274,79 @@ async function seedCatalog() {
     statements.push(
       db
         .prepare(
-          `INSERT INTO portrait_dna_versions
-          (id, style_id, version, status, modules_json, created_at, updated_at, published_at)
-          VALUES (?, ?, ?, 'active', ?, ?, ?, ?)`,
+          `INSERT OR IGNORE INTO portrait_dna_versions
+          (id, style_id, version, engine_version, status, modules_json, created_at, updated_at, published_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
-          `${style.id}_v1`,
+          `${style.id}_v${style.version.replaceAll(".", "_")}`,
           style.id,
           style.version,
+          style.engineVersion,
+          style.status,
           JSON.stringify(moduleRefs),
           now,
           now,
-          now,
+          style.status === "active" || style.status === "retired" ? now : null,
         ),
     );
+    await db.batch(statements);
   }
-  await db.batch(statements);
 
-  const prompt = await compilePrompt({
+  for (const style of PORTRAIT_STYLES) {
+    await db
+      .prepare(
+        `INSERT INTO portrait_styles
+        (id, slug, public_name, public_name_zh, internal_reference_name, description, current_version, status, accent, traits_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          slug = excluded.slug,
+          public_name = excluded.public_name,
+          public_name_zh = excluded.public_name_zh,
+          internal_reference_name = excluded.internal_reference_name,
+          description = excluded.description,
+          current_version = CASE
+            WHEN portrait_styles.current_version LIKE '1.%'
+              THEN excluded.current_version
+            ELSE portrait_styles.current_version
+          END,
+          status = 'active',
+          accent = excluded.accent,
+          traits_json = excluded.traits_json,
+          updated_at = excluded.updated_at`,
+      )
+      .bind(
+        style.id,
+        style.slug,
+        style.publicName,
+        style.publicNameZh,
+        style.internalReferenceName,
+        style.description,
+        style.version,
+        style.accent,
+        JSON.stringify(style.traits),
+        now,
+        now,
+      )
+      .run();
+  }
+
+  await db.batch([
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO portrait_users (id, email, display_name, role, created_at)
+         VALUES (?, ?, ?, 'admin', ?)`,
+      )
+      .bind("user_dev_admin", "dev.admin@catv.local", "CATV 开发管理员", now),
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO portrait_users (id, email, display_name, role, created_at)
+         VALUES (?, ?, ?, 'operator', ?)`,
+      )
+      .bind("user_demo_operator", "operator@catv.local", "肖像运营", now),
+  ]);
+
+  const legacyPrompt = await compilePrompt({
     portraitDNAId: "style_quiet_executive",
     portraitDNAVersion: "1.0",
     sourceContext:
@@ -300,47 +354,38 @@ async function seedCatalog() {
   });
   const demoOrderId = "order_demo_001";
   const demoJobId = "job_demo_001";
+  const legacyPromptId = "prompt_demo_v1_001";
   await db.batch([
     db
       .prepare(
-        `INSERT INTO portrait_users (id, email, display_name, role, created_at)
-         VALUES (?, ?, ?, 'admin', ?)`,
-      )
-      .bind("user_dev_admin", "dev.admin@catv.local", "CATV 开发管理员", now),
-    db
-      .prepare(
-        `INSERT INTO portrait_users (id, email, display_name, role, created_at)
-         VALUES (?, ?, ?, 'operator', ?)`,
-      )
-      .bind("user_demo_operator", "operator@catv.local", "肖像运营", now),
-    db
-      .prepare(
-        `INSERT INTO portrait_orders
+        `INSERT OR IGNORE INTO portrait_orders
         (id, order_number, customer_nickname, customer_contact_note, source_channel, selected_style_id, selected_style_version, status, price_fen, currency, payment_status, customer_requirements, internal_notes, assigned_operator_id, created_at, updated_at)
         VALUES (?, 'CATV-260728-001', '林小姐', '小红书私信 · 已确认可用照片', 'xiaohongshu', 'style_quiet_executive', '1.0', 'awaiting_internal_review', 990, 'CNY', 'paid', '用于产品负责人主页，希望自然、不要过度修图', '首单示例：等待内部筛选', 'dev.admin@catv.local', ?, ?)`,
       )
       .bind(demoOrderId, now, now),
     db
       .prepare(
-        `INSERT INTO compiled_prompts
-        (id, order_id, positive_prompt, negative_prompt, structured_payload_json, module_versions_json, portrait_dna_id, portrait_dna_version, compiler_version, checksum, created_at)
-        VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR IGNORE INTO compiled_prompts
+        (id, order_id, positive_prompt, negative_prompt, structured_payload_json, module_versions_json, module_order_json, portrait_dna_id, portrait_dna_version, engine_version, compiler_version, checksum, created_at)
+        VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
-        prompt.id,
+        legacyPromptId,
         demoOrderId,
-        prompt.positivePrompt,
-        prompt.negativePrompt,
-        JSON.stringify(prompt.moduleVersions),
-        prompt.portraitDNAId,
-        prompt.portraitDNAVersion,
-        prompt.compilerVersion,
-        prompt.checksum,
-        prompt.createdAt,
+        legacyPrompt.positivePrompt,
+        legacyPrompt.negativePrompt,
+        JSON.stringify(legacyPrompt.moduleVersions),
+        JSON.stringify(legacyPrompt.moduleOrder),
+        legacyPrompt.portraitDNAId,
+        legacyPrompt.portraitDNAVersion,
+        legacyPrompt.engineVersion,
+        legacyPrompt.compilerVersion,
+        legacyPrompt.checksum,
+        legacyPrompt.createdAt,
       ),
     db
       .prepare(
-        `INSERT INTO generation_jobs
+        `INSERT OR IGNORE INTO generation_jobs
         (id, order_id, status, provider_name, requested_count, completed_count, retry_count, max_retries, idempotency_key, created_at, updated_at)
         VALUES (?, ?, 'awaiting_review', 'mock', 4, 4, 0, 1, 'demo-job-v1', ?, ?)`,
       )
@@ -349,15 +394,15 @@ async function seedCatalog() {
   const candidates = Array.from({ length: 4 }, (_, index) =>
     db
       .prepare(
-        `INSERT INTO portrait_candidates
-        (id, order_id, generation_job_id, portrait_dna_id, portrait_dna_version, provider_name, provider_model, compiled_prompt_id, master_asset_id, status, rejection_reasons_json, quality_score, variant, created_at, updated_at)
-        VALUES (?, ?, ?, 'style_quiet_executive', '1.0', 'mock', 'portrait-mock-1.0', ?, NULL, 'awaiting_review', '[]', ?, ?, ?, ?)`,
+        `INSERT OR IGNORE INTO portrait_candidates
+        (id, order_id, generation_job_id, portrait_dna_id, portrait_dna_version, provider_name, provider_model, compiled_prompt_id, master_asset_id, status, rejection_reasons_json, quality_score, quality_score_json, review_checklist_json, variant, created_at, updated_at)
+        VALUES (?, ?, ?, 'style_quiet_executive', '1.0', 'mock', 'portrait-mock-1.0', ?, NULL, 'awaiting_review', '[]', ?, '{}', '{}', ?, ?, ?)`,
       )
       .bind(
         `candidate_demo_00${index + 1}`,
         demoOrderId,
         demoJobId,
-        prompt.id,
+        legacyPromptId,
         88 - index * 2,
         index + 1,
         now,
@@ -365,26 +410,188 @@ async function seedCatalog() {
       ),
   );
   await db.batch(candidates);
+
+  const v2Prompt = await compilePrompt({
+    portraitDNAId: "style_global_professional",
+    portraitDNAVersion: "2.0",
+    sourceContext:
+      "Technical validation passed: one usable identity reference, adequate dimensions and supported image format. No profession, personality or sensitive attribute was inferred.",
+  });
+  const v2OrderId = "order_demo_v2_001";
+  const v2JobId = "job_demo_v2_001";
+  const v2PromptId = "prompt_demo_v2_001";
+  const checklist = {
+    pose: {
+      face_nearly_frontal: true,
+      torso_angle_correct: true,
+      head_level: true,
+      chin_position_correct: true,
+      shoulders_relaxed: true,
+      not_passport_photo: true,
+    },
+    gaze: {
+      direct_eye_contact: true,
+      stable_gaze: true,
+      not_timid: true,
+      not_overly_soft: true,
+      not_aggressive: true,
+      natural_eye_anatomy: true,
+    },
+    presence: {
+      grounded: true,
+      credible: true,
+      professionally_substantial: true,
+      emotionally_stable: true,
+      memorable_without_theatricality: true,
+    },
+    hair: {
+      natural_volume: true,
+      root_lift: true,
+      realistic_density: true,
+      hairline_preserved: true,
+      not_flat: true,
+      not_wig_like: true,
+    },
+  };
+  const qualityScore = {
+    identitySimilarity: 94,
+    poseNormalization: 92,
+    faceFrontality: 94,
+    shoulderBalance: 91,
+    gazeStability: 93,
+    gazeConfidence: 91,
+    eyeNaturalness: 95,
+    expressionNaturalness: 90,
+    presenceScore: 92,
+    groundedness: 91,
+    credibility: 94,
+    visualAuthority: 86,
+    hairVolumeRealism: 90,
+    hairlinePreservation: 98,
+    hairTextureRealism: 92,
+    skinRealism: 94,
+    wardrobeIntegrity: 93,
+    backgroundQuality: 91,
+    photographicRealism: 93,
+    careerSuitability: 94,
+    overallScore: 93,
+    hardFailures: [],
+    warnings: [],
+  };
   await db.batch([
     db
       .prepare(
-        `INSERT INTO portrait_audit_logs (id, operator_id, order_id, resource_id, action, metadata_json, created_at)
+        `INSERT OR IGNORE INTO portrait_orders
+        (id, order_number, customer_nickname, customer_contact_note, source_channel, selected_style_id, selected_style_version, status, price_fen, currency, payment_status, customer_requirements, internal_notes, assigned_operator_id, created_at, updated_at)
+        VALUES (?, 'CATV-260728-V20', '周先生', '官网表单 · 已确认肖像处理同意', 'website', 'style_global_professional', '2.0', 'awaiting_internal_review', 990, 'CNY', 'paid', '国际职业主页，可信但不要证件照感', 'Portrait Engine v2 示例订单', 'dev.admin@catv.local', ?, ?)`,
+      )
+      .bind(v2OrderId, now, now),
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO compiled_prompts
+        (id, order_id, positive_prompt, negative_prompt, structured_payload_json, module_versions_json, module_order_json, portrait_dna_id, portrait_dna_version, engine_version, compiler_version, checksum, created_at)
+        VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        v2PromptId,
+        v2OrderId,
+        v2Prompt.positivePrompt,
+        v2Prompt.negativePrompt,
+        JSON.stringify(v2Prompt.moduleVersions),
+        JSON.stringify(v2Prompt.moduleOrder),
+        v2Prompt.portraitDNAId,
+        v2Prompt.portraitDNAVersion,
+        v2Prompt.engineVersion,
+        v2Prompt.compilerVersion,
+        v2Prompt.checksum,
+        v2Prompt.createdAt,
+      ),
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO generation_jobs
+        (id, order_id, status, provider_name, requested_count, completed_count, retry_count, max_retries, idempotency_key, created_at, updated_at)
+        VALUES (?, ?, 'awaiting_review', 'mock', 4, 4, 0, 1, 'demo-job-v2', ?, ?)`,
+      )
+      .bind(v2JobId, v2OrderId, now, now),
+  ]);
+  await db.batch(
+    Array.from({ length: 4 }, (_, index) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO portrait_candidates
+          (id, order_id, generation_job_id, portrait_dna_id, portrait_dna_version, provider_name, provider_model, compiled_prompt_id, master_asset_id, status, rejection_reasons_json, quality_score, quality_score_json, review_checklist_json, variant, created_at, updated_at)
+          VALUES (?, ?, ?, 'style_global_professional', '2.0', 'mock', 'portrait-mock-2.0', ?, NULL, 'awaiting_review', ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          `candidate_demo_v2_00${index + 1}`,
+          v2OrderId,
+          v2JobId,
+          v2PromptId,
+          JSON.stringify(index === 3 ? ["weak_presence"] : []),
+          93 - index * 3,
+          JSON.stringify({
+            ...qualityScore,
+            overallScore: 93 - index * 3,
+            warnings: index === 3 ? ["weak presence"] : [],
+          }),
+          JSON.stringify(checklist),
+          index + 1,
+          now,
+          now,
+        ),
+    ),
+  );
+
+  await db.batch([
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO portrait_audit_logs (id, operator_id, order_id, resource_id, action, metadata_json, created_at)
          VALUES (?, 'dev.admin@catv.local', ?, ?, 'create_order', '{"channel":"xiaohongshu"}', ?)`,
       )
-      .bind(crypto.randomUUID(), demoOrderId, demoOrderId, now),
+      .bind("audit_demo_v1_create", demoOrderId, demoOrderId, now),
     db
       .prepare(
-        `INSERT INTO portrait_audit_logs (id, operator_id, order_id, resource_id, action, metadata_json, created_at)
+        `INSERT OR IGNORE INTO portrait_audit_logs (id, operator_id, order_id, resource_id, action, metadata_json, created_at)
          VALUES (?, 'dev.admin@catv.local', ?, ?, 'compile_prompt', '{"compilerVersion":"1.0.0"}', ?)`,
       )
-      .bind(crypto.randomUUID(), demoOrderId, prompt.id, now),
+      .bind("audit_demo_v1_compile", demoOrderId, legacyPromptId, now),
     db
       .prepare(
-        `INSERT INTO portrait_audit_logs (id, operator_id, order_id, resource_id, action, metadata_json, created_at)
-         VALUES (?, 'dev.admin@catv.local', ?, ?, 'start_generation', '{"provider":"mock","count":4}', ?)`,
+        `INSERT OR IGNORE INTO portrait_audit_logs (id, operator_id, order_id, resource_id, action, metadata_json, created_at)
+         VALUES (?, 'dev.admin@catv.local', ?, ?, 'compile_prompt', '{"compilerVersion":"2.0.0","engineVersion":"2.0"}', ?)`,
       )
-      .bind(crypto.randomUUID(), demoOrderId, demoJobId, now),
+      .bind("audit_demo_v2_compile", v2OrderId, v2PromptId, now),
   ]);
+}
+
+async function ensureV2Columns() {
+  const db = getPortraitDb();
+  const additions = [
+    ["portrait_dna_versions", "engine_version", "TEXT NOT NULL DEFAULT '1.0'"],
+    ["prompt_modules", "engine_version", "TEXT NOT NULL DEFAULT '1.0'"],
+    ["compiled_prompts", "module_order_json", "TEXT NOT NULL DEFAULT '[]'"],
+    ["compiled_prompts", "engine_version", "TEXT NOT NULL DEFAULT '1.0'"],
+    ["portrait_candidates", "quality_score_json", "TEXT NOT NULL DEFAULT '{}'"],
+    ["portrait_candidates", "review_checklist_json", "TEXT NOT NULL DEFAULT '{}'"],
+  ] as const;
+  const cache = new Map<string, Set<string>>();
+  for (const [table, column, definition] of additions) {
+    if (!cache.has(table)) {
+      const result = await db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all<{ name: string }>();
+      cache.set(
+        table,
+        new Set((result.results ?? []).map((item) => item.name)),
+      );
+    }
+    if (!cache.get(table)?.has(column)) {
+      await db
+        .prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+        .run();
+      cache.get(table)?.add(column);
+    }
+  }
 }
 
 export async function ensurePortraitDatabase() {
@@ -394,6 +601,7 @@ export async function ensurePortraitDatabase() {
       await db.batch(
         schemaStatements.map((statement) => db.prepare(statement)),
       );
+      await ensureV2Columns();
       await seedCatalog();
     })().catch((error) => {
       initialization = null;
@@ -443,6 +651,8 @@ export async function listStudioState(
     promptRows,
     auditRows,
     moduleRows,
+    dnaVersionRows,
+    styleRows,
   ] = await Promise.all([
     allRows<Record<string, unknown>>(
       db.prepare("SELECT * FROM portrait_orders ORDER BY created_at DESC"),
@@ -470,6 +680,14 @@ export async function listStudioState(
     ),
     allRows<Record<string, unknown>>(
       db.prepare("SELECT * FROM prompt_modules ORDER BY category, name"),
+    ),
+    allRows<Record<string, unknown>>(
+      db.prepare(
+        "SELECT * FROM portrait_dna_versions ORDER BY style_id, created_at DESC",
+      ),
+    ),
+    allRows<Record<string, unknown>>(
+      db.prepare("SELECT * FROM portrait_styles ORDER BY public_name"),
     ),
   ]);
 
@@ -523,6 +741,18 @@ export async function listStudioState(
     rejectionReasons: jsonArray(row.rejection_reasons_json),
     qualityScore:
       row.quality_score === null ? null : Number(row.quality_score),
+    qualityScoreDetail: {
+      hardFailures: [],
+      warnings: [],
+      ...jsonObject(row.quality_score_json),
+    } as PortraitCandidate["qualityScoreDetail"],
+    reviewChecklist: {
+      pose: {},
+      gaze: {},
+      presence: {},
+      hair: {},
+      ...jsonObject(row.review_checklist_json),
+    } as PortraitCandidate["reviewChecklist"],
     variant: Number(row.variant),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -568,8 +798,12 @@ export async function listStudioState(
               ([key, value]) => [key, String(value)],
             ),
           ),
+          moduleOrder: jsonArray(
+            row.module_order_json,
+          ) as CompiledPrompt["moduleOrder"],
           portraitDNAId: String(row.portrait_dna_id),
           portraitDNAVersion: String(row.portrait_dna_version),
+          engineVersion: String(row.engine_version ?? "1.0"),
           compilerVersion: String(row.compiler_version),
           checksum: String(row.checksum),
           createdAt: String(row.created_at),
@@ -579,8 +813,12 @@ export async function listStudioState(
           positivePrompt: "仅 Admin 可查看完整 Prompt。",
           negativePrompt: "仅 Admin 可查看完整 Prompt。",
           moduleVersions: {},
+          moduleOrder: jsonArray(
+            row.module_order_json,
+          ) as CompiledPrompt["moduleOrder"],
           portraitDNAId: String(row.portrait_dna_id),
           portraitDNAVersion: String(row.portrait_dna_version),
+          engineVersion: String(row.engine_version ?? "1.0"),
           compilerVersion: String(row.compiler_version),
           checksum: String(row.checksum),
           createdAt: String(row.created_at),
@@ -597,7 +835,7 @@ export async function listStudioState(
   }));
 
   const usage = new Map<string, string[]>();
-  for (const style of PORTRAIT_STYLES) {
+  for (const style of PORTRAIT_STYLE_VERSIONS) {
     for (const category of Object.keys(style.modules)) {
       const slug = `${style.slug}-${category}`;
       usage.set(slug, [...(usage.get(slug) ?? []), style.publicNameZh]);
@@ -609,11 +847,58 @@ export async function listStudioState(
     name: String(row.name),
     category: row.category as PromptModuleRecord["category"],
     version: String(row.version),
+    engineVersion: String(row.engine_version ?? "1.0"),
     positivePrompt: String(row.positive_prompt),
     negativePrompt: row.negative_prompt ? String(row.negative_prompt) : null,
+    parameters: jsonObject(row.parameters_json),
     status: row.status as PromptModuleRecord["status"],
     usedBy: usage.get(String(row.slug)) ?? [],
   }));
+
+  const dnaVersions = dnaVersionRows.map((row) => ({
+    id: String(row.id),
+    styleId: String(row.style_id),
+    version: String(row.version),
+    engineVersion: String(row.engine_version ?? "1.0"),
+    status: row.status as StudioState["dnaVersions"][number]["status"],
+    modules: Object.fromEntries(
+      Object.entries(jsonObject(row.modules_json)).map(([key, value]) => [
+        key,
+        String(value),
+      ]),
+    ),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    publishedAt: row.published_at ? String(row.published_at) : null,
+  }));
+
+  const styleRowById = new Map(
+    styleRows.map((row) => [String(row.id), row]),
+  );
+  const styles = PORTRAIT_STYLES.map((template) => {
+    const row = styleRowById.get(template.id);
+    if (!row) return template;
+    const version = String(row.current_version);
+    const activeDna = dnaVersions.find(
+      (dna) =>
+        dna.styleId === template.id &&
+        dna.version === version &&
+        dna.status === "active",
+    );
+    return {
+      ...template,
+      slug: String(row.slug),
+      publicName: String(row.public_name),
+      publicNameZh: String(row.public_name_zh),
+      internalReferenceName: String(row.internal_reference_name ?? ""),
+      description: String(row.description),
+      version,
+      engineVersion: activeDna?.engineVersion ?? template.engineVersion,
+      status: String(row.status) as PortraitStyle["status"],
+      accent: String(row.accent),
+      traits: jsonArray(row.traits_json),
+    };
+  });
 
   const activeElapsed = orders
     .filter((order) => order.completedAt)
@@ -632,7 +917,8 @@ export async function listStudioState(
   return {
     actor,
     orders,
-    styles: PORTRAIT_STYLES,
+    styles,
+    dnaVersions,
     candidates,
     assets,
     jobs,
@@ -663,7 +949,7 @@ export async function listStudioState(
     config: {
       provider: runtime.PORTRAIT_PROVIDER ?? "mock",
       providerConfigured: Boolean(runtime.PORTRAIT_PROVIDER_API_KEY),
-      providerModel: runtime.PORTRAIT_PROVIDER_MODEL ?? "gpt-image-1.5",
+      providerModel: runtime.PORTRAIT_PROVIDER_MODEL ?? "gpt-image-2",
       generationCount: Number(
         runtime.PORTRAIT_DEFAULT_GENERATION_COUNT ?? "4",
       ),
@@ -794,6 +1080,80 @@ export async function getOrderRecord(orderId: string) {
     .first<Record<string, unknown>>();
 }
 
+export async function getPortraitStyleDefinition(
+  styleId: string,
+  version?: string,
+): Promise<PortraitStyle> {
+  await ensurePortraitDatabase();
+  const db = getPortraitDb();
+  const styleRow = await db
+    .prepare("SELECT * FROM portrait_styles WHERE id = ?")
+    .bind(styleId)
+    .first<Record<string, unknown>>();
+  if (!styleRow) throw new Error("所选 Portrait DNA 不存在。");
+  const targetVersion = version ?? String(styleRow.current_version);
+  const dna = await db
+    .prepare(
+      "SELECT * FROM portrait_dna_versions WHERE style_id = ? AND version = ?",
+    )
+    .bind(styleId, targetVersion)
+    .first<Record<string, unknown>>();
+  if (!dna) throw new Error("所选 Portrait DNA 版本不存在。");
+  if (!version && String(dna.status) !== "active") {
+    throw new Error("新订单只能使用 active Portrait DNA。");
+  }
+  if (["draft"].includes(String(dna.status))) {
+    throw new Error("Draft Portrait DNA 不可用于生产。");
+  }
+
+  const template =
+    PORTRAIT_STYLE_VERSIONS.find(
+      (item) => item.id === styleId && item.version === targetVersion,
+    ) ??
+    PORTRAIT_STYLE_VERSIONS.find(
+      (item) =>
+        item.id === styleId &&
+        item.engineVersion === String(dna.engine_version ?? "2.0"),
+    );
+  if (!template) throw new Error("Portrait DNA 缺少可用的风格模板。");
+
+  const moduleRefs = jsonObject(dna.modules_json);
+  const modules: PortraitStyle["modules"] = {};
+  const parameters: NonNullable<PortraitStyle["parameters"]> = {};
+  for (const [category, reference] of Object.entries(moduleRefs)) {
+    const moduleId = String(reference).split("@")[0];
+    const moduleRow = await db
+      .prepare("SELECT * FROM prompt_modules WHERE id = ?")
+      .bind(moduleId)
+      .first<Record<string, unknown>>();
+    if (!moduleRow) {
+      throw new Error(`Portrait DNA 模块引用失效：${category}`);
+    }
+    const moduleCategory = category as keyof PortraitStyle["modules"];
+    modules[moduleCategory] =
+      category === "negative"
+        ? String(moduleRow.negative_prompt ?? "")
+        : String(moduleRow.positive_prompt ?? "");
+    parameters[moduleCategory] = jsonObject(moduleRow.parameters_json);
+  }
+
+  return {
+    ...template,
+    slug: String(styleRow.slug),
+    publicName: String(styleRow.public_name),
+    publicNameZh: String(styleRow.public_name_zh),
+    internalReferenceName: String(styleRow.internal_reference_name ?? ""),
+    description: String(styleRow.description),
+    version: targetVersion,
+    engineVersion: String(dna.engine_version ?? "1.0"),
+    status: String(dna.status) as PortraitStyle["status"],
+    accent: String(styleRow.accent),
+    traits: jsonArray(styleRow.traits_json),
+    modules,
+    parameters,
+  };
+}
+
 export async function getAssetStorageRecord(assetId: string) {
   await ensurePortraitDatabase();
   return getPortraitDb()
@@ -848,8 +1208,8 @@ export async function saveCompiledPrompt(
   await db
     .prepare(
       `INSERT INTO compiled_prompts
-      (id, order_id, positive_prompt, negative_prompt, structured_payload_json, module_versions_json, portrait_dna_id, portrait_dna_version, compiler_version, checksum, created_at)
-      VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, ?)`,
+      (id, order_id, positive_prompt, negative_prompt, structured_payload_json, module_versions_json, module_order_json, portrait_dna_id, portrait_dna_version, engine_version, compiler_version, checksum, created_at)
+      VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       prompt.id,
@@ -857,8 +1217,10 @@ export async function saveCompiledPrompt(
       prompt.positivePrompt,
       prompt.negativePrompt,
       JSON.stringify(prompt.moduleVersions),
+      JSON.stringify(prompt.moduleOrder),
       prompt.portraitDNAId,
       prompt.portraitDNAVersion,
+      prompt.engineVersion,
       prompt.compilerVersion,
       prompt.checksum,
       prompt.createdAt,
@@ -961,6 +1323,8 @@ export async function insertCandidateRecord(input: {
   masterAssetId: string;
   status?: string;
   qualityScore?: number;
+  qualityScoreDetail?: Record<string, unknown>;
+  reviewChecklist?: Record<string, unknown>;
   variant: number;
 }) {
   await ensurePortraitDatabase();
@@ -968,8 +1332,8 @@ export async function insertCandidateRecord(input: {
   await getPortraitDb()
     .prepare(
       `INSERT INTO portrait_candidates
-      (id, order_id, generation_job_id, portrait_dna_id, portrait_dna_version, provider_name, provider_model, compiled_prompt_id, master_asset_id, status, rejection_reasons_json, quality_score, variant, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`,
+      (id, order_id, generation_job_id, portrait_dna_id, portrait_dna_version, provider_name, provider_model, compiled_prompt_id, master_asset_id, status, rejection_reasons_json, quality_score, quality_score_json, review_checklist_json, variant, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       input.id,
@@ -983,6 +1347,14 @@ export async function insertCandidateRecord(input: {
       input.masterAssetId,
       input.status ?? "awaiting_review",
       input.qualityScore ?? 86,
+      JSON.stringify(
+        input.qualityScoreDetail ?? {
+          overallScore: input.qualityScore ?? 86,
+          hardFailures: [],
+          warnings: [],
+        },
+      ),
+      JSON.stringify(input.reviewChecklist ?? {}),
       input.variant,
       now,
       now,
@@ -1044,18 +1416,21 @@ export async function updateCandidateStatus(
   status: string,
   reasons: string[] = [],
   notes?: string,
+  reviewChecklist?: Record<string, unknown>,
 ) {
   await ensurePortraitDatabase();
   await getPortraitDb()
     .prepare(
       `UPDATE portrait_candidates
-       SET status = ?, rejection_reasons_json = ?, operator_notes = COALESCE(?, operator_notes), updated_at = ?
+       SET status = ?, rejection_reasons_json = ?, operator_notes = COALESCE(?, operator_notes),
+           review_checklist_json = COALESCE(?, review_checklist_json), updated_at = ?
        WHERE id = ?`,
     )
     .bind(
       status,
       JSON.stringify(reasons),
       notes ?? null,
+      reviewChecklist ? JSON.stringify(reviewChecklist) : null,
       new Date().toISOString(),
       candidateId,
     )
@@ -1145,22 +1520,125 @@ export async function createDnaDraft(styleId: string) {
     .bind(styleId)
     .first<Record<string, unknown>>();
   if (!active) throw new Error("找不到可复制的 active DNA 版本。");
-  const version = `${String(active.version).split(".")[0]}.1-draft`;
+  const versions = await allRows<{ version: string }>(
+    db
+      .prepare("SELECT version FROM portrait_dna_versions WHERE style_id = ?")
+      .bind(styleId),
+  );
+  const nextMinor =
+    Math.max(
+      0,
+      ...versions.map((item) => {
+        const match = item.version.match(/^(\d+)\.(\d+)/);
+        return match ? Number(match[1]) * 100 + Number(match[2]) : 0;
+      }),
+    ) + 1;
+  const version = `${Math.floor(nextMinor / 100)}.${nextMinor % 100}-draft`;
   const id = `${styleId}_${crypto.randomUUID()}`;
   await db
     .prepare(
       `INSERT INTO portrait_dna_versions
-      (id, style_id, version, status, modules_json, created_at, updated_at)
-      VALUES (?, ?, ?, 'draft', ?, ?, ?)`,
+      (id, style_id, version, engine_version, status, modules_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)`,
     )
     .bind(
       id,
       styleId,
       version,
+      String(active.engine_version ?? "2.0"),
       String(active.modules_json),
       new Date().toISOString(),
       new Date().toISOString(),
     )
     .run();
   return { id, version };
+}
+
+export async function updateDnaDraft(input: {
+  id: string;
+  modules: Record<string, string>;
+}) {
+  await ensurePortraitDatabase();
+  const db = getPortraitDb();
+  const current = await db
+    .prepare("SELECT status FROM portrait_dna_versions WHERE id = ?")
+    .bind(input.id)
+    .first<{ status: string }>();
+  if (!current || current.status !== "draft") {
+    throw new Error("只有 draft Portrait DNA 可以编辑。");
+  }
+  await db
+    .prepare(
+      "UPDATE portrait_dna_versions SET modules_json = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(
+      JSON.stringify(input.modules),
+      new Date().toISOString(),
+      input.id,
+    )
+    .run();
+}
+
+export async function publishDnaVersion(id: string) {
+  await ensurePortraitDatabase();
+  const db = getPortraitDb();
+  const current = await db
+    .prepare("SELECT * FROM portrait_dna_versions WHERE id = ?")
+    .bind(id)
+    .first<Record<string, unknown>>();
+  if (!current || !["draft", "testing"].includes(String(current.status))) {
+    throw new Error("只有 draft 或 testing 版本可以发布。");
+  }
+  const version = String(current.version).replace(/-draft$/, "");
+  const conflict = await db
+    .prepare(
+      "SELECT id FROM portrait_dna_versions WHERE style_id = ? AND version = ? AND id <> ?",
+    )
+    .bind(String(current.style_id), version, id)
+    .first();
+  if (conflict) throw new Error("该正式版本号已存在，请复制为新版本后再发布。");
+  const now = new Date().toISOString();
+  await db
+    .prepare(
+      `UPDATE portrait_dna_versions
+       SET version = ?, status = 'testing', published_at = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+    .bind(version, now, now, id)
+    .run();
+  return { id, version, status: "testing" as const };
+}
+
+export async function setActiveDnaVersion(id: string) {
+  await ensurePortraitDatabase();
+  const db = getPortraitDb();
+  const target = await db
+    .prepare("SELECT * FROM portrait_dna_versions WHERE id = ?")
+    .bind(id)
+    .first<Record<string, unknown>>();
+  if (!target || !["testing", "active"].includes(String(target.status))) {
+    throw new Error("只有已发布的 testing 版本可以设为 active。");
+  }
+  const now = new Date().toISOString();
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE portrait_dna_versions
+         SET status = CASE WHEN id = ? THEN 'active' ELSE 'retired' END, updated_at = ?
+         WHERE style_id = ? AND status IN ('active','testing')`,
+      )
+      .bind(id, now, String(target.style_id)),
+    db
+      .prepare(
+        `UPDATE portrait_styles
+         SET current_version = ?, status = 'active', updated_at = ? WHERE id = ?`,
+      )
+      .bind(String(target.version), now, String(target.style_id)),
+  ]);
+  return {
+    id,
+    styleId: String(target.style_id),
+    version: String(target.version),
+    status: "active" as const,
+  };
 }

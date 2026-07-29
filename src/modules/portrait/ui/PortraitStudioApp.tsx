@@ -90,6 +90,68 @@ const CANDIDATE_STATUS: Record<string, string> = {
   delivered: "已交付",
 };
 
+const REVIEW_GROUPS = {
+  pose: [
+    ["face_nearly_frontal", "面部接近正面"],
+    ["torso_angle_correct", "躯干角度正确"],
+    ["head_level", "头部水平"],
+    ["chin_position_correct", "下巴前伸微收"],
+    ["shoulders_relaxed", "肩膀放松"],
+    ["not_passport_photo", "无证件照感"],
+  ],
+  gaze: [
+    ["direct_eye_contact", "直视镜头"],
+    ["stable_gaze", "眼神稳定"],
+    ["not_timid", "不怯弱"],
+    ["not_overly_soft", "不过柔"],
+    ["not_aggressive", "不过凶"],
+    ["natural_eye_anatomy", "眼型自然"],
+  ],
+  presence: [
+    ["grounded", "稳定落地"],
+    ["credible", "可信"],
+    ["professionally_substantial", "职业重量"],
+    ["emotionally_stable", "情绪稳定"],
+    ["memorable_without_theatricality", "有记忆点但不戏剧化"],
+  ],
+  hair: [
+    ["natural_volume", "发量自然"],
+    ["root_lift", "发根支撑"],
+    ["realistic_density", "密度真实"],
+    ["hairline_preserved", "发际线保持"],
+    ["not_flat", "不扁塌"],
+    ["not_wig_like", "无假发感"],
+  ],
+} as const;
+
+const REJECTION_REASONS = [
+  ["identity_mismatch", "身份不一致"],
+  ["pose_inherited_from_source", "继承原图姿势"],
+  ["head_tilt", "头部倾斜"],
+  ["passport_photo_composition", "证件照式构图"],
+  ["gaze_too_soft", "眼神太柔"],
+  ["gaze_timid", "眼神怯弱"],
+  ["gaze_aggressive", "眼神过凶"],
+  ["weak_presence", "存在感不足"],
+  ["flat_hair", "头发扁塌"],
+  ["hairline_changed", "发际线改变"],
+  ["hair_volume_exaggerated", "发量夸张"],
+  ["wig_like_hair", "假发质感"],
+  ["eye_artifact", "眼睛伪影"],
+  ["teeth_artifact", "牙齿伪影"],
+  ["skin_too_smooth", "皮肤过度平滑"],
+  ["hair_artifact", "头发伪影"],
+  ["wardrobe_artifact", "服装结构错误"],
+  ["jewelry_artifact", "首饰伪影"],
+  ["pose_unnatural", "姿势不自然"],
+  ["expression_unnatural", "表情不自然"],
+  ["background_fake", "背景虚假"],
+  ["too_beautified", "过度美化"],
+  ["age_changed", "年龄改变"],
+  ["not_professional", "职业感不足"],
+  ["other", "其他"],
+] as const;
+
 const NAV = [
   {
     href: "/admin/portrait",
@@ -738,7 +800,7 @@ function NewOrderView({
             <span>02</span>
             <div>
               <h2>选择 Signature 风格</h2>
-              <p>新订单绑定当前 active DNA v1.0，后续升级不会回写。</p>
+              <p>新订单绑定当前 active DNA v2.0；旧订单继续锁定原版本。</p>
             </div>
           </div>
           <div className="style-radio-grid">
@@ -873,7 +935,9 @@ function PromptPanel({
           <h2>结构化 Prompt</h2>
         </div>
         <span className="version-chip">
-          DNA {order.selectedStyleVersion} · Compiler 1.0.0
+          DNA {order.selectedStyleVersion} · Engine{" "}
+          {prompt?.engineVersion ?? order.selectedStyleVersion} · Compiler{" "}
+          {prompt?.compilerVersion ?? (order.selectedStyleVersion === "2.0" ? "2.0.0" : "1.0.0")}
         </span>
       </div>
       {prompt ? (
@@ -882,6 +946,9 @@ function PromptPanel({
             <div className="prompt-code-head">
               <span>
                 <CheckCircle2 size={14} /> Identity 排在第一位
+              </span>
+              <span>
+                Negative 最后一位 · {prompt.moduleOrder.length} 模块
               </span>
               <code>sha256:{prompt.checksum.slice(0, 12)}</code>
             </div>
@@ -936,6 +1003,12 @@ function CandidateCard({
   runAction: (payload: Record<string, unknown>, message?: string) => Promise<void>;
   busy: string;
 }) {
+  const [reviewChecklist, setReviewChecklist] = useState(
+    candidate.reviewChecklist,
+  );
+  const [rejectionReason, setRejectionReason] = useState(
+    candidate.rejectionReasons[0] ?? "other",
+  );
   const isSelected = [
     "selected_for_preview",
     "sent_to_customer",
@@ -972,6 +1045,53 @@ function CandidateCard({
           <strong>{candidate.providerName.replace("_api", "")}</strong>
         </div>
       </div>
+      {canReview && (
+        <details className="candidate-review">
+          <summary>Pose · Gaze · Presence · Hair 审核</summary>
+          <div className="review-groups">
+            {Object.entries(REVIEW_GROUPS).map(([group, items]) => (
+              <fieldset key={group}>
+                <legend>{group === "hair" ? "Hair & Grooming" : group}</legend>
+                {items.map(([key, label]) => (
+                  <label key={key}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(
+                        reviewChecklist[group as keyof typeof reviewChecklist]?.[
+                          key
+                        ],
+                      )}
+                      onChange={(event) =>
+                        setReviewChecklist((current) => ({
+                          ...current,
+                          [group]: {
+                            ...current[group as keyof typeof current],
+                            [key]: event.target.checked,
+                          },
+                        }))
+                      }
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </fieldset>
+            ))}
+          </div>
+          <label className="rejection-select">
+            <span>淘汰原因</span>
+            <select
+              value={rejectionReason}
+              onChange={(event) => setRejectionReason(event.target.value)}
+            >
+              {REJECTION_REASONS.map(([value, label]) => (
+                <option value={value} key={value}>
+                  {label} · {value}
+                </option>
+              ))}
+            </select>
+          </label>
+        </details>
+      )}
       <div className="candidate-actions">
         {canReview && candidate.status !== "approved" && (
           <button
@@ -980,7 +1100,11 @@ function CandidateCard({
             disabled={busy === candidate.id}
             onClick={() =>
               runAction(
-                { action: "approve_candidate", candidateId: candidate.id },
+                {
+                  action: "approve_candidate",
+                  candidateId: candidate.id,
+                  reviewChecklist,
+                },
                 "候选图已通过内部审核。",
               )
             }
@@ -998,9 +1122,10 @@ function CandidateCard({
                 {
                   action: "reject_candidate",
                   candidateId: candidate.id,
-                  reasons: ["other"],
+                  reasons: [rejectionReason],
+                  reviewChecklist,
                 },
-                "候选图已淘汰，可在后续版本细化原因。",
+                `候选图已淘汰：${rejectionReason}。`,
               )
             }
           >
@@ -1306,7 +1431,9 @@ function OrderWorkspace({
               <div className="eyebrow">PORTRAIT DNA</div>
               <h2>{style?.publicNameZh}</h2>
             </div>
-            <span className="version-chip active">ACTIVE · v1.0</span>
+            <span className="version-chip active">
+              ACTIVE · Engine {style?.engineVersion} · v{order.selectedStyleVersion}
+            </span>
           </div>
           <p className="dna-description">{style?.description}</p>
           <div className="trait-row">
@@ -1561,9 +1688,15 @@ function OrderWorkspace({
                   <option value="looks_most_like_me">最像本人</option>
                   <option value="more_natural">更自然</option>
                   <option value="more_confident">更自信</option>
-                  <option value="more_friendly">更亲和</option>
+                  <option value="stronger_presence">存在感更强</option>
+                  <option value="better_eye_contact">眼神更好</option>
                   <option value="more_professional">更职业</option>
+                  <option value="better_posture">姿态更好</option>
+                  <option value="better_hair">头发更好</option>
                   <option value="better_expression">表情更好</option>
+                  <option value="better_wardrobe">服装更合适</option>
+                  <option value="better_background">背景更合适</option>
+                  <option value="other">其他</option>
                 </select>
               </label>
               <label>
@@ -1759,6 +1892,136 @@ function OrderWorkspace({
   );
 }
 
+function DnaVersionManager({
+  state,
+  style,
+  runSimpleAction,
+}: {
+  state: StudioState;
+  style: PortraitStyle;
+  runSimpleAction: (
+    payload: Record<string, unknown>,
+    message: string,
+  ) => Promise<void>;
+}) {
+  const versions = state.dnaVersions.filter(
+    (version) => version.styleId === style.id,
+  );
+  const draft = versions.find((version) => version.status === "draft");
+  const [draftModules, setDraftModules] = useState(
+    JSON.stringify(draft?.modules ?? {}, null, 2),
+  );
+  const parameterGroups = [
+    ["Pose", style.parameters?.pose_normalization],
+    ["Gaze", style.parameters?.gaze],
+    ["Expression", style.parameters?.expression],
+    ["Presence", style.parameters?.presence],
+    ["Hair & Grooming", style.parameters?.hair_grooming],
+  ] as const;
+
+  return (
+    <details className="dna-version-manager">
+      <summary>查看参数与比较 v1.x / v2.0</summary>
+      <div className="dna-version-row">
+        {versions.map((version) => (
+          <span key={version.id}>
+            v{version.version} · Engine {version.engineVersion} ·{" "}
+            <b>{version.status}</b>
+          </span>
+        ))}
+      </div>
+      <div className="engine-parameter-grid">
+        {parameterGroups.map(([label, parameters]) => (
+          <section key={label}>
+            <h3>{label}</h3>
+            {Object.entries(parameters ?? {}).map(([key, value]) => (
+              <div key={key}>
+                <span>{key}</span>
+                <strong>{String(value)}</strong>
+              </div>
+            ))}
+          </section>
+        ))}
+      </div>
+      <div className="version-comparison">
+        <div>
+          <strong>v1.x · historical</strong>
+          <span>17 模块 · 无独立 Source / Gaze / Presence 引擎</span>
+        </div>
+        <ArrowRight size={17} />
+        <div>
+          <strong>v2.x · active family</strong>
+          <span>20 模块 · 九引擎 · 参数化 Pose / Gaze / Presence / Hair</span>
+        </div>
+      </div>
+      {draft && (
+        <div className="draft-editor">
+          <label>
+            <span>Draft 模块引用（JSON）</span>
+            <textarea
+              rows={7}
+              value={draftModules}
+              onChange={(event) => setDraftModules(event.target.value)}
+            />
+          </label>
+          <div className="inline-actions">
+            <button
+              className="button button-ghost"
+              onClick={() => {
+                try {
+                  const modules = JSON.parse(draftModules) as Record<
+                    string,
+                    string
+                  >;
+                  void runSimpleAction(
+                    {
+                      action: "update_dna_draft",
+                      dnaVersionId: draft.id,
+                      modules,
+                    },
+                    `v${draft.version} draft 已保存。`,
+                  );
+                } catch {
+                  window.alert("Draft JSON 格式不正确。");
+                }
+              }}
+            >
+              保存 draft
+            </button>
+            <button
+              className="button button-primary"
+              onClick={() =>
+                runSimpleAction(
+                  { action: "publish_dna", dnaVersionId: draft.id },
+                  "DNA 已发布到 testing，可审核后设为 active。",
+                )
+              }
+            >
+              发布为 testing
+            </button>
+          </div>
+        </div>
+      )}
+      {versions
+        .filter((version) => version.status === "testing")
+        .map((version) => (
+          <button
+            className="button button-primary button-wide"
+            key={version.id}
+            onClick={() =>
+              runSimpleAction(
+                { action: "set_active_dna", dnaVersionId: version.id },
+                `v${version.version} 已设为新订单 active；旧订单版本未变。`,
+              )
+            }
+          >
+            将 v{version.version} 设为 active
+          </button>
+        ))}
+    </details>
+  );
+}
+
 function StylesView({
   state,
   runSimpleAction,
@@ -1816,7 +2079,8 @@ function StylesView({
                     <strong>{orderCount}</strong> 订单
                   </span>
                   <span>
-                    <strong>{Object.keys(style.modules).length}</strong> 模块
+                    <strong>{Object.keys(style.modules).length}</strong> 模块 · Engine{" "}
+                    {style.engineVersion}
                   </span>
                   <span>
                     <strong>—</strong> 重做率
@@ -1834,6 +2098,18 @@ function StylesView({
                 >
                   <Copy size={15} /> 复制为新版本草稿
                 </button>
+                <DnaVersionManager
+                  key={
+                    state.dnaVersions.find(
+                      (version) =>
+                        version.styleId === style.id &&
+                        version.status === "draft",
+                    )?.id ?? `${style.id}:no-draft`
+                  }
+                  state={state}
+                  style={style}
+                  runSimpleAction={runSimpleAction}
+                />
               </div>
             </article>
           );
@@ -1880,7 +2156,9 @@ function ModulesView({ state }: { state: StudioState }) {
           <article className="module-card" key={module.id}>
             <div className="module-head">
               <span>{module.category.replaceAll("_", " ")}</span>
-              <span className="version-chip">v{module.version}</span>
+              <span className="version-chip">
+                Engine {module.engineVersion} · v{module.version}
+              </span>
             </div>
             <h2>{module.name.split(" · ")[1] || module.name}</h2>
             <code>{module.slug}</code>
@@ -1888,6 +2166,12 @@ function ModulesView({ state }: { state: StudioState }) {
               {(module.positivePrompt || module.negativePrompt || "").slice(0, 150)}
               …
             </p>
+            {Object.keys(module.parameters).length > 0 && (
+              <details className="module-parameters">
+                <summary>查看参数</summary>
+                <pre>{JSON.stringify(module.parameters, null, 2)}</pre>
+              </details>
+            )}
             <div className="module-foot">
               <span>
                 <CheckCircle2 size={13} /> {module.status}
@@ -1911,6 +2195,36 @@ function AnalyticsView({ state }: { state: StudioState }) {
   const rejected = state.candidates.filter(
     (candidate) => candidate.status === "rejected",
   ).length;
+  const rejectionCount = (reason: string) =>
+    state.candidates.filter((candidate) =>
+      candidate.rejectionReasons.includes(reason),
+    ).length;
+  const versionMetric = (version: string) => {
+    const orders = state.orders.filter(
+      (order) => order.selectedStyleVersion === version,
+    );
+    const orderIds = new Set(orders.map((order) => order.id));
+    const selected = state.candidates.filter(
+      (candidate) =>
+        orderIds.has(candidate.orderId) &&
+        ["customer_selected", "finalized", "delivered"].includes(
+          candidate.status,
+        ),
+    ).length;
+    const redo = state.jobs.filter(
+      (job) => orderIds.has(job.orderId) && job.retryCount > 0,
+    ).length;
+    return {
+      selectionRate: orders.length
+        ? `${Math.round((selected / orders.length) * 100)}%`
+        : "—",
+      redoRate: orders.length
+        ? `${Math.round((redo / orders.length) * 100)}%`
+        : "—",
+    };
+  };
+  const v1Metric = versionMetric("1.0");
+  const v2Metric = versionMetric("2.0");
   return (
     <div className="view-stack">
       <div className="view-heading">
@@ -1927,6 +2241,8 @@ function AnalyticsView({ state }: { state: StudioState }) {
           ["重做次数", state.jobs.filter((job) => job.retryCount > 0).length, "累计"],
           ["淘汰候选", rejected, "人工审核"],
           ["平均交付", `${state.stats.averageHours}h`, "从创建到完成"],
+          ["v1 客户选择率", v1Metric.selectionRate, `重做 ${v1Metric.redoRate}`],
+          ["v2 客户选择率", v2Metric.selectionRate, `重做 ${v2Metric.redoRate}`],
         ].map(([label, value, note]) => (
           <div className="analytics-metric" key={String(label)}>
             <span>{label}</span>
@@ -1969,18 +2285,21 @@ function AnalyticsView({ state }: { state: StudioState }) {
           </div>
           <div className="signal-list">
             {[
-              ["身份不像", "identity_mismatch", "0"],
-              ["眼睛伪影", "eye_artifact", "0"],
-              ["皮肤过度平滑", "skin_too_smooth", "0"],
-              ["背景不自然", "background_fake", "0"],
-              ["更像本人", "looks_most_like_me", "1"],
-            ].map(([label, code, count]) => (
+              ["弱存在感淘汰率", "weak_presence"],
+              ["眼神太柔淘汰率", "gaze_too_soft"],
+              ["姿势继承原图率", "pose_inherited_from_source"],
+              ["证件照感淘汰率", "passport_photo_composition"],
+              ["发量不足淘汰率", "flat_hair"],
+              ["发量过度淘汰率", "hair_volume_exaggerated"],
+              ["身份不像", "identity_mismatch"],
+              ["眼睛伪影", "eye_artifact"],
+            ].map(([label, code]) => (
               <div key={code}>
                 <span>
                   <strong>{label}</strong>
                   <code>{code}</code>
                 </span>
-                <b>{count}</b>
+                <b>{rejectionCount(code)}</b>
               </div>
             ))}
           </div>

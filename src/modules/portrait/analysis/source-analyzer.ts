@@ -9,8 +9,9 @@ export type SubjectAnalysis = {
   obstructionDetected?: boolean;
   glassesDetected?: boolean;
   heavyBeautyFilterSuspected?: boolean;
-  hairLengthCategory?: "short" | "medium" | "long" | "unknown";
-  currentWardrobeCategory?: string;
+  // This analyzer is intentionally technical-only. It must never infer
+  // personality, profession, income, class, attractiveness, health, politics,
+  // religion or any other sensitive attribute.
   warnings: string[];
 };
 
@@ -37,11 +38,9 @@ export class MockSourceImageAnalyzer implements SourceImageAnalyzer {
       imageHeight: input.height,
       faceSharpness: 0.82,
       exposureQuality: 0.86,
-      hairLengthCategory: "unknown",
       warnings: [
-        "Mock Analyzer 只完成技术占位检查；必须由运营人员确认单人、清晰与无遮挡。",
+        "Mock Analyzer 只完成尺寸、清晰度、曝光、单人脸和遮挡等技术占位检查；不分析职业、性格或敏感属性。",
       ],
     };
   }
 }
-

@@ -7,10 +7,10 @@ import {
 } from "../../../../src/modules/portrait/assets/storage";
 import {
   createOrderRecord,
+  getPortraitStyleDefinition,
   insertAssetRecord,
   insertAudit,
 } from "../../../../src/modules/portrait/database/repository";
-import { getStyle } from "../../../../src/modules/portrait/domain/catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       throw new Error("请上传一张客户原图。");
     }
     const styleId = String(form.get("styleId") || "");
-    const style = getStyle(styleId);
+    const style = await getPortraitStyleDefinition(styleId);
     const image = await validateImageFile(file);
     const orderId = crypto.randomUUID();
     const assetId = crypto.randomUUID();
@@ -106,4 +106,3 @@ export async function POST(request: Request) {
     );
   }
 }
-

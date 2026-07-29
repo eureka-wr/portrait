@@ -190,9 +190,26 @@ async function handleAction(body: Record<string, unknown>) {
     }
     const candidate = job.candidates.find((item) => item.id === candidateId);
     if (!candidate) throw new HttpError(404, "没有找到这张候选图。");
+    const reviewChecklist =
+      body.reviewChecklist &&
+      typeof body.reviewChecklist === "object" &&
+      !Array.isArray(body.reviewChecklist)
+        ? (body.reviewChecklist as PortraitJob["candidates"][number]["reviewChecklist"])
+        : candidate.reviewChecklist;
+    const rejectionReasons =
+      decision === "rejected" && Array.isArray(body.rejectionReasons)
+        ? body.rejectionReasons
+            .filter((item): item is string => typeof item === "string")
+            .slice(0, 12)
+        : [];
     const candidates = job.candidates.map((item) =>
       item.id === candidateId
-        ? { ...item, status: decision as CandidateStatus }
+        ? {
+            ...item,
+            status: decision as CandidateStatus,
+            reviewChecklist,
+            rejectionReasons,
+          }
         : item,
     );
     return saveJob({ ...job, candidates });

@@ -115,6 +115,13 @@ export function toSafeJob(job: PortraitJob): SafePortraitJob {
     description: candidate.description,
     mimeType: candidate.mimeType,
     status: candidate.status,
+    portraitDNAId: candidate.portraitDNAId,
+    portraitDNAVersion: candidate.portraitDNAVersion,
+    engineVersion: candidate.engineVersion,
+    compilerVersion: candidate.compilerVersion,
+    promptChecksum: candidate.promptChecksum,
+    reviewChecklist: candidate.reviewChecklist,
+    rejectionReasons: candidate.rejectionReasons,
     createdAt: candidate.createdAt,
     url: assetUrl(job.id, `candidate:${candidate.id}`, job.updatedAt),
   }));

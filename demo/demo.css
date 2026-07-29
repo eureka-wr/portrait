@@ -10,6 +10,66 @@
   --danger: #9d514c;
 }
 
+.production-review-controls {
+  border-top: 1px solid var(--line);
+  padding: 0 14px 14px;
+}
+
+.production-review-controls details > summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 11px 0;
+}
+
+.production-review-groups {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.production-review-groups fieldset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 0;
+  min-width: 0;
+  padding: 8px;
+}
+
+.production-review-groups legend {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.production-review-groups label {
+  align-items: center;
+  display: flex;
+  font-size: 10px;
+  gap: 5px;
+  margin: 5px 0;
+}
+
+.production-rejection {
+  display: grid;
+  font-size: 10px;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.production-rejection select {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px;
+  width: 100%;
+}
+
+@media (max-width: 620px) {
+  .production-review-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

@@ -18,6 +18,7 @@ import {
   getCandidateRecord,
   getOrderAssetsForDeletion,
   getOrderRecord,
+  getPortraitStyleDefinition,
   getPortraitDb,
   getSourceAsset,
   insertAssetRecord,
@@ -26,7 +27,10 @@ import {
   latestCompiledPrompt,
   markCustomerSelected,
   saveCompiledPrompt,
+  publishDnaVersion,
+  setActiveDnaVersion,
   softDeleteAsset,
+  updateDnaDraft,
   updateCandidateStatus,
   updateGenerationJob,
   updateOrderStatus,
@@ -49,6 +53,9 @@ type ActionBody = {
   freeText?: string;
   refinement?: string;
   styleId?: string;
+  dnaVersionId?: string;
+  modules?: Record<string, string>;
+  reviewChecklist?: Record<string, unknown>;
 };
 
 function fail(error: unknown, status = 400) {
@@ -70,21 +77,30 @@ async function compileForOrder(
 ) {
   const order = await getOrderRecord(orderId);
   if (!order) throw new Error("订单不存在或已被删除。");
-  const prompt = await compilePrompt({
-    portraitDNAId: String(order.selected_style_id),
-    portraitDNAVersion: String(order.selected_style_version),
-    sourceContext:
-      "A single customer-supplied source image is attached. Preserve identity exactly. Basic technical analysis passed; all quality and identity judgments remain subject to human review.",
-    operatorPreferences: order.customer_requirements
-      ? String(order.customer_requirements)
-      : undefined,
-    refinementRequest: refinement,
-  });
+  const style = await getPortraitStyleDefinition(
+    String(order.selected_style_id),
+    String(order.selected_style_version),
+  );
+  const prompt = await compilePrompt(
+    {
+      portraitDNAId: String(order.selected_style_id),
+      portraitDNAVersion: String(order.selected_style_version),
+      sourceContext:
+        "A single customer-supplied source image is attached. Preserve identity exactly. Basic technical analysis passed; all quality and identity judgments remain subject to human review.",
+      operatorPreferences: order.customer_requirements
+        ? String(order.customer_requirements)
+        : undefined,
+      refinementRequest: refinement,
+    },
+    style,
+  );
   const promptId = await saveCompiledPrompt(orderId, prompt);
   await insertAudit(actor, "compile_prompt", orderId, promptId, {
     portraitDNAId: prompt.portraitDNAId,
     portraitDNAVersion: prompt.portraitDNAVersion,
+    engineVersion: prompt.engineVersion,
     compilerVersion: prompt.compilerVersion,
+    moduleOrder: prompt.moduleOrder,
     checksum: prompt.checksum.slice(0, 12),
     refinement: Boolean(refinement),
   });
@@ -209,6 +225,37 @@ async function generateCandidates(
           input.debugScenario === "quality_failure" && index === 0
             ? 54
             : 91 - index * 2,
+        qualityScoreDetail: {
+          identitySimilarity: 94 - index,
+          poseNormalization: 92 - index,
+          faceFrontality: 93 - index,
+          shoulderBalance: 91 - index,
+          gazeStability: 92 - index,
+          gazeConfidence: 90 - index,
+          eyeNaturalness: 94 - index,
+          expressionNaturalness: 90 - index,
+          presenceScore: 91 - index,
+          groundedness: 92 - index,
+          credibility: 93 - index,
+          visualAuthority: 87 - index,
+          hairVolumeRealism: 91 - index,
+          hairlinePreservation: 98,
+          hairTextureRealism: 91 - index,
+          skinRealism: 94 - index,
+          wardrobeIntegrity: 93 - index,
+          backgroundQuality: 92 - index,
+          photographicRealism: 93 - index,
+          careerSuitability: 94 - index,
+          overallScore:
+            input.debugScenario === "quality_failure" && index === 0
+              ? 54
+              : 91 - index * 2,
+          hardFailures:
+            input.debugScenario === "quality_failure" && index === 0
+              ? ["source pose copied"]
+              : [],
+          warnings: index === 3 ? ["check presence weight"] : [],
+        },
         variant: index + 1,
       });
       completed += 1;
@@ -351,6 +398,7 @@ export async function POST(request: Request) {
           "approved",
           [],
           body.notes,
+          body.reviewChecklist,
         );
         await insertAudit(
           actor,
@@ -369,6 +417,7 @@ export async function POST(request: Request) {
           "rejected",
           body.reasons ?? ["other"],
           body.notes,
+          body.reviewChecklist,
         );
         await insertAudit(
           actor,
@@ -538,6 +587,40 @@ export async function POST(request: Request) {
           version: draft.version,
         });
         return NextResponse.json({ ok: true, draft });
+      }
+      case "update_dna_draft": {
+        assertAdmin(actor);
+        if (!body.dnaVersionId || !body.modules) {
+          throw new Error("缺少 draft DNA 或模块配置。");
+        }
+        await updateDnaDraft({
+          id: body.dnaVersionId,
+          modules: body.modules,
+        });
+        await insertAudit(actor, "change_portrait_dna", null, body.dnaVersionId, {
+          action: "update_draft",
+        });
+        return NextResponse.json({ ok: true });
+      }
+      case "publish_dna": {
+        assertAdmin(actor);
+        if (!body.dnaVersionId) throw new Error("缺少 DNA 版本。");
+        const version = await publishDnaVersion(body.dnaVersionId);
+        await insertAudit(actor, "change_portrait_dna", null, body.dnaVersionId, {
+          action: "publish_testing",
+          version: version.version,
+        });
+        return NextResponse.json({ ok: true, version });
+      }
+      case "set_active_dna": {
+        assertAdmin(actor);
+        if (!body.dnaVersionId) throw new Error("缺少 DNA 版本。");
+        const version = await setActiveDnaVersion(body.dnaVersionId);
+        await insertAudit(actor, "change_portrait_dna", null, body.dnaVersionId, {
+          action: "set_active",
+          version: version.version,
+        });
+        return NextResponse.json({ ok: true, version });
       }
       default:
         throw new Error("不支持的后台操作。");

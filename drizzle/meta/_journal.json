@@ -15,6 +15,13 @@
       "when": 1785208504124,
       "tag": "0001_nervous_malice",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785231000000,
+      "tag": "0002_portrait_engine_v2",
+      "breakpoints": true
     }
   ]
 }

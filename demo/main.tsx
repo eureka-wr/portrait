@@ -42,6 +42,18 @@ type Candidate = {
   status: CandidateStatus;
   createdAt: string;
   url: string;
+  portraitDNAId: string;
+  portraitDNAVersion: string;
+  engineVersion: string;
+  compilerVersion: string;
+  promptChecksum: string;
+  reviewChecklist: {
+    pose: Record<string, boolean>;
+    gaze: Record<string, boolean>;
+    presence: Record<string, boolean>;
+    hair: Record<string, boolean>;
+  };
+  rejectionReasons: string[];
 };
 
 type PortraitJob = {
@@ -65,6 +77,7 @@ type PortraitJob = {
   selectedCandidateId?: string;
   model?: string;
   promptHash?: string;
+  engineVersion?: string;
   delivery?: {
     createdAt: string;
     filename: string;
@@ -96,6 +109,58 @@ const statusLabels: Record<JobStatus, string> = {
 const channelOptions = ["职业主页", "简历 / CV", "小红书", "LinkedIn", "企业官网"];
 const jobStorageKey = "catv-portrait-current-job";
 
+const productionReviewGroups = {
+  pose: [
+    ["face_nearly_frontal", "面部接近正面"],
+    ["torso_angle_correct", "躯干角度正确"],
+    ["head_level", "头部水平"],
+    ["chin_position_correct", "下巴位置正确"],
+    ["shoulders_relaxed", "肩膀放松"],
+    ["not_passport_photo", "无证件照感"],
+  ],
+  gaze: [
+    ["direct_eye_contact", "直视镜头"],
+    ["stable_gaze", "眼神稳定"],
+    ["not_timid", "不怯弱"],
+    ["not_overly_soft", "不过柔"],
+    ["not_aggressive", "不过凶"],
+    ["natural_eye_anatomy", "眼型自然"],
+  ],
+  presence: [
+    ["grounded", "稳定落地"],
+    ["credible", "可信"],
+    ["professionally_substantial", "有职业重量"],
+    ["emotionally_stable", "情绪稳定"],
+    ["memorable_without_theatricality", "自然且有记忆点"],
+  ],
+  hair: [
+    ["natural_volume", "发量自然"],
+    ["root_lift", "发根支撑"],
+    ["realistic_density", "密度真实"],
+    ["hairline_preserved", "发际线保持"],
+    ["not_flat", "不扁塌"],
+    ["not_wig_like", "无假发感"],
+  ],
+} as const;
+
+const productionRejectionReasons = [
+  ["identity_mismatch", "身份不一致"],
+  ["pose_inherited_from_source", "继承原图姿势"],
+  ["passport_photo_composition", "证件照感"],
+  ["gaze_too_soft", "眼神太柔"],
+  ["gaze_timid", "眼神怯弱"],
+  ["gaze_aggressive", "眼神过凶"],
+  ["weak_presence", "存在感不足"],
+  ["flat_hair", "头发扁塌"],
+  ["hairline_changed", "发际线改变"],
+  ["hair_volume_exaggerated", "发量夸张"],
+  ["wig_like_hair", "假发质感"],
+  ["skin_too_smooth", "皮肤过度平滑"],
+  ["wardrobe_artifact", "服装错误"],
+  ["background_fake", "背景虚假"],
+  ["other", "其他"],
+] as const;
+
 function BrandMark() {
   return (
     <span className="brand-mark" aria-hidden="true">
@@ -117,12 +182,23 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 async function getSession() {
-  return readJson<SessionStatus>(
+  const session = await readJson<SessionStatus>(
     await fetch("/api/session", {
       credentials: "include",
       cache: "no-store",
     }),
   );
+  if (
+    !session?.configured ||
+    typeof session.authenticated !== "boolean" ||
+    typeof session.configured.access !== "boolean" ||
+    typeof session.configured.provider !== "boolean" ||
+    typeof session.configured.storage !== "boolean" ||
+    typeof session.model !== "string"
+  ) {
+    throw new Error("会话服务尚未就绪。");
+  }
+  return session;
 }
 
 async function fetchPortraitJob(jobId: string) {
@@ -576,6 +652,85 @@ function GenerationProgress() {
   );
 }
 
+function CandidateReviewControls({
+  candidate,
+  disabled,
+  onReview,
+}: {
+  candidate: Candidate;
+  disabled: boolean;
+  onReview: (
+    decision: "approved" | "rejected",
+    checklist: Candidate["reviewChecklist"],
+    rejectionReasons: string[],
+  ) => void;
+}) {
+  const [checklist, setChecklist] = useState(candidate.reviewChecklist);
+  const [reason, setReason] = useState(
+    candidate.rejectionReasons[0] ?? "other",
+  );
+
+  return (
+    <div className="production-review-controls">
+      <details>
+        <summary>审核 Pose · Gaze · Presence · Hair</summary>
+        <div className="production-review-groups">
+          {Object.entries(productionReviewGroups).map(([group, items]) => (
+            <fieldset key={group}>
+              <legend>{group === "hair" ? "Hair & Grooming" : group}</legend>
+              {items.map(([key, label]) => (
+                <label key={key}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(
+                      checklist[group as keyof typeof checklist]?.[key],
+                    )}
+                    onChange={(event) =>
+                      setChecklist((current) => ({
+                        ...current,
+                        [group]: {
+                          ...current[group as keyof typeof current],
+                          [key]: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </fieldset>
+          ))}
+        </div>
+        <label className="production-rejection">
+          <span>淘汰原因</span>
+          <select value={reason} onChange={(event) => setReason(event.target.value)}>
+            {productionRejectionReasons.map(([value, label]) => (
+              <option value={value} key={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </details>
+      <div className="candidate-actions">
+        <button
+          disabled={disabled}
+          onClick={() => onReview("approved", checklist, [])}
+        >
+          <Check size={14} /> 通过
+        </button>
+        <button
+          className="reject"
+          disabled={disabled}
+          onClick={() => onReview("rejected", checklist, [reason])}
+        >
+          <X size={14} /> 驳回
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function JobWorkspace({
   job,
   session,
@@ -702,7 +857,7 @@ function JobWorkspace({
           <h2>四种职业形象</h2>
           <p>
             同一张原图会分别生成静默领导者、国际职业形象、高管领导力和创业者工作室。
-            身份保持指令固定在每个 Prompt 首位。
+            原图只用于身份参考；CATV Portrait Engine v2.0 会重新规范姿态、眼神、存在感与头发。
           </p>
           <dl>
             <div>
@@ -716,6 +871,10 @@ function JobWorkspace({
             <div>
               <dt>质量</dt>
               <dd>High</dd>
+            </div>
+            <div>
+              <dt>引擎</dt>
+              <dd>{job.engineVersion ? `v${job.engineVersion}` : "v2.0"}</dd>
             </div>
           </dl>
           {job.notes && (
@@ -764,7 +923,7 @@ function JobWorkspace({
                   <UserRoundCheck size={15} />
                 </div>
                 <h2>人工审核四张候选</h2>
-                <p>检查是否像本人、五官和手部是否自然、服装与背景是否符合用途。</p>
+                <p>逐项检查身份、姿态、眼神、存在感、头发、服装与背景。</p>
               </div>
               <span>{approvedCount} 张已通过</span>
             </div>
@@ -796,35 +955,26 @@ function JobWorkspace({
                   <div className="candidate-copy">
                     <strong>{candidate.label}</strong>
                     <small>{candidate.description}</small>
+                    <small>
+                      DNA v{candidate.portraitDNAVersion} · Compiler{" "}
+                      {candidate.compilerVersion}
+                    </small>
                   </div>
+                  {candidate.status === "pending" && (
+                    <CandidateReviewControls
+                      candidate={candidate}
+                      disabled={Boolean(busy)}
+                      onReview={(decision, reviewChecklist, rejectionReasons) =>
+                        action("review", {
+                          candidateId: candidate.id,
+                          decision,
+                          reviewChecklist,
+                          rejectionReasons,
+                        }).catch(() => undefined)
+                      }
+                    />
+                  )}
                   <div className="candidate-actions">
-                    {candidate.status === "pending" && (
-                      <>
-                        <button
-                          disabled={Boolean(busy)}
-                          onClick={() =>
-                            action("review", {
-                              candidateId: candidate.id,
-                              decision: "approved",
-                            }).catch(() => undefined)
-                          }
-                        >
-                          <Check size={14} /> 通过
-                        </button>
-                        <button
-                          className="reject"
-                          disabled={Boolean(busy)}
-                          onClick={() =>
-                            action("review", {
-                              candidateId: candidate.id,
-                              decision: "rejected",
-                            }).catch(() => undefined)
-                          }
-                        >
-                          <X size={14} /> 驳回
-                        </button>
-                      </>
-                    )}
                     {candidate.status === "approved" && (
                       <button
                         className="select-button"

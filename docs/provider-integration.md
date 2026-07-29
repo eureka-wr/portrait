@@ -8,7 +8,7 @@ Implement `PortraitProvider.generate()` and return owned image bytes, MIME type,
 - Manual Upload: records an externally generated image as `manual_external`.
 - OpenAI Image API: sends a multipart reference image to `/v1/images/edits`, uses high input fidelity, a server-only API key, AbortController timeout and finite retry.
 
-Default real model is `gpt-image-1.5`, which can be overridden by `PORTRAIT_PROVIDER_MODEL`. Review the current [official image guide](https://developers.openai.com/api/docs/guides/image-generation) before changing model or request fields.
+Default real model is `gpt-image-2`, which can be overridden by `PORTRAIT_PROVIDER_MODEL`. Review the current [official image guide](https://developers.openai.com/api/docs/guides/image-generation) before changing model or request fields.
 
 ## Adding a provider
 
@@ -19,4 +19,3 @@ Default real model is `gpt-image-1.5`, which can be overridden by `PORTRAIT_PROV
 5. Record provider/model on each Candidate.
 6. Add success, partial-success, timeout and missing-configuration tests.
 7. Register the adapter in `getPortraitProvider()`.
-

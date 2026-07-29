@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { strToU8, zipSync } from "fflate";
 import sharp from "sharp";
+import { compilePrompt } from "../../src/modules/portrait/prompts/compiler.js";
 import { HttpError } from "./auth.js";
 import {
   candidateAssetPath,
@@ -18,53 +19,52 @@ const VARIANTS = [
     id: "quiet-leader",
     label: "静默领导者",
     description: "灰蓝极简 · 克制自信 · 科技管理层",
-    direction:
-      "A quiet-leadership executive portrait. Cool pale gray-blue seamless studio background, soft directional key light, subtle fill, charcoal minimal business clothing, restrained and intelligent presence.",
+    styleId: "style_quiet_executive",
   },
   {
     id: "global-professional",
     label: "国际职业形象",
     description: "明亮中性 · 可信亲和 · 国际化简历",
-    direction:
-      "An international professional portrait for a global company profile. Bright neutral light-gray studio background, clean softbox lighting, navy modern business clothing, open and trustworthy expression.",
+    styleId: "style_global_professional",
   },
   {
     id: "executive-presence",
     label: "高管领导力",
     description: "温润棚拍 · 稳定权威 · 高管质感",
-    direction:
-      "A premium senior-executive portrait. Warm neutral studio background, sculpted but natural Rembrandt-inspired light, sophisticated dark business attire, calm authority without exaggeration.",
+    styleId: "style_boardroom_leadership",
   },
   {
     id: "founder-studio",
     label: "创业者工作室",
     description: "现代空间 · 自然松弛 · 创始人气质",
-    direction:
-      "A contemporary founder portrait in a minimal creative studio. Soft daylight, subtle architectural blur, elevated smart-casual clothing, relaxed confidence and modern entrepreneurial energy.",
+    styleId: "style_founder_studio",
   },
 ] as const;
 
 function providerModel() {
-  return process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-1.5";
+  return process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-2";
 }
 
 export function providerConfigured() {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
 }
 
-function buildPrompt(direction: string, notes: string) {
-  return [
-    "IDENTITY PRESERVATION — NON-NEGOTIABLE.",
-    "Edit the supplied reference photograph into a photorealistic professional headshot of the exact same real person.",
-    "Preserve exact facial identity, facial geometry, apparent age, ethnicity, skin tone, eye shape, nose, mouth, jawline, hairline, and all distinctive natural characteristics.",
-    "Do not beautify into a different person. Do not change body type. Keep realistic skin texture, pores, fine lines, and natural asymmetry. No plastic skin and no AI-looking artifacts.",
-    "Frame from upper torso to head in a vertical 4:5 professional composition. Eyes sharp, natural camera optics, accurate anatomy, realistic hair, realistic ears and hands if visible.",
-    direction,
-    notes ? `Operator brief: ${notes}` : "",
-    "No text, no logos, no watermark, no border, no collage, no duplicate person.",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+export async function buildPortraitProductionPrompts(notes: string) {
+  return Promise.all(
+    VARIANTS.map(async (variant) => {
+      const compiled = await compilePrompt({
+        portraitDNAId: variant.styleId,
+        portraitDNAVersion: "2.0",
+        sourceContext:
+          "The attached customer image passed technical upload validation. Use it only to preserve the same real person's identity; do not infer profession, personality or sensitive attributes.",
+        operatorPreferences: notes || undefined,
+      });
+      return {
+        ...compiled,
+        providerPrompt: `${compiled.positivePrompt}\n\n[20 · NEGATIVE]\n${compiled.negativePrompt}`,
+      };
+    }),
+  );
 }
 
 async function callImageEdit(source: Buffer, prompt: string) {
@@ -152,9 +152,8 @@ async function mapWithConcurrency<T, R>(
 
 export async function generateFourCandidates(job: PortraitJob) {
   const source = await readPrivateBytes(job.source.pathname);
-  const prompts = VARIANTS.map((variant) =>
-    buildPrompt(variant.direction, job.notes),
-  );
+  const compiledPrompts = await buildPortraitProductionPrompts(job.notes);
+  const prompts = compiledPrompts.map((item) => item.providerPrompt);
   const promptHash = createHash("sha256")
     .update(prompts.join("\n---\n"))
     .digest("hex");
@@ -171,6 +170,18 @@ export async function generateFourCandidates(job: PortraitJob) {
         pathname: "",
         mimeType: "image/jpeg",
         status: "pending",
+        portraitDNAId: variant.styleId,
+        portraitDNAVersion: "2.0",
+        engineVersion: "2.0",
+        compilerVersion: compiledPrompts[index].compilerVersion,
+        promptChecksum: compiledPrompts[index].checksum,
+        reviewChecklist: {
+          pose: {},
+          gaze: {},
+          presence: {},
+          hair: {},
+        },
+        rejectionReasons: [],
         createdAt: new Date().toISOString(),
       };
       candidate.pathname = await putPrivate(
@@ -186,6 +197,7 @@ export async function generateFourCandidates(job: PortraitJob) {
     candidates,
     model: providerModel(),
     promptHash,
+    engineVersion: "2.0" as const,
   };
 }
 

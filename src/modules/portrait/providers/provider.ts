@@ -58,7 +58,7 @@ export class OpenAIImageProvider implements PortraitProvider {
     if (!runtime.PORTRAIT_PROVIDER_API_KEY) {
       throw new Error("OpenAI 图像 Provider 未配置 API Key，已停止真实调用。");
     }
-    const model = runtime.PORTRAIT_PROVIDER_MODEL || "gpt-image-1.5";
+    const model = runtime.PORTRAIT_PROVIDER_MODEL || "gpt-image-2";
     const baseUrl =
       runtime.PORTRAIT_PROVIDER_BASE_URL || "https://api.openai.com/v1";
     const timeout = Number(runtime.PORTRAIT_PROVIDER_TIMEOUT_MS || "120000");

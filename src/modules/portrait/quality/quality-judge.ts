@@ -1,19 +1,6 @@
-export type PortraitQualityScore = {
-  identitySimilarity?: number;
-  faceIntegrity?: number;
-  eyeNaturalness?: number;
-  expressionNaturalness?: number;
-  skinRealism?: number;
-  hairRealism?: number;
-  wardrobeIntegrity?: number;
-  poseNaturalness?: number;
-  backgroundQuality?: number;
-  photographicRealism?: number;
-  careerSuitability?: number;
-  overallScore?: number;
-  hardFailures: string[];
-  warnings: string[];
-};
+import type { PortraitQualityScore } from "../domain/types";
+
+export type { PortraitQualityScore } from "../domain/types";
 
 export interface PortraitQualityJudge {
   evaluate(input: {
@@ -23,16 +10,36 @@ export interface PortraitQualityJudge {
 }
 
 export class MockQualityJudge implements PortraitQualityJudge {
-  async evaluate(): Promise<PortraitQualityScore> {
+  async evaluate(input: {
+    sourceAssetId: string;
+    candidateAssetId: string;
+  }): Promise<PortraitQualityScore> {
+    void input;
     return {
-      faceIntegrity: 0.9,
-      eyeNaturalness: 0.86,
-      skinRealism: 0.88,
-      photographicRealism: 0.87,
-      overallScore: 0.88,
+      identitySimilarity: 92,
+      poseNormalization: 90,
+      faceFrontality: 93,
+      shoulderBalance: 89,
+      gazeStability: 91,
+      gazeConfidence: 90,
+      eyeNaturalness: 94,
+      expressionNaturalness: 90,
+      presenceScore: 89,
+      groundedness: 90,
+      credibility: 92,
+      visualAuthority: 86,
+      professionalWeight: 88,
+      hairVolumeRealism: 91,
+      hairlinePreservation: 98,
+      hairTextureRealism: 92,
+      skinRealism: 93,
+      wardrobeIntegrity: 94,
+      backgroundQuality: 92,
+      photographicRealism: 93,
+      careerSuitability: 94,
+      overallScore: 92,
       hardFailures: [],
       warnings: ["自动分数仅作排序辅助，不能替代人工交付审核。"],
     };
   }
 }
-

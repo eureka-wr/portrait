@@ -16,6 +16,18 @@ export type PortraitCandidate = {
   pathname: string;
   mimeType: "image/jpeg";
   status: CandidateStatus;
+  portraitDNAId: string;
+  portraitDNAVersion: "2.0";
+  engineVersion: "2.0";
+  compilerVersion: string;
+  promptChecksum: string;
+  reviewChecklist: {
+    pose: Record<string, boolean>;
+    gaze: Record<string, boolean>;
+    presence: Record<string, boolean>;
+    hair: Record<string, boolean>;
+  };
+  rejectionReasons: string[];
   createdAt: string;
 };
 
@@ -41,6 +53,7 @@ export type PortraitJob = {
   selectedCandidateId?: string;
   model?: string;
   promptHash?: string;
+  engineVersion?: "2.0";
   delivery?: {
     pathname: string;
     createdAt: string;

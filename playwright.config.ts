@@ -20,7 +20,8 @@ export default defineConfig({
   webServer: externalBaseUrl
     ? undefined
     : {
-        command: "pnpm dev -- --port 3108",
+        command:
+          "pnpm exec vinext dev --port 3108 --hostname 127.0.0.1",
         url: baseURL,
         reuseExistingServer: true,
         timeout: 120_000,

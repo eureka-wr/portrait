@@ -10,6 +10,7 @@ import {
   toSafeJob,
 } from "../server/portrait-production/store";
 import type { PortraitJob } from "../server/portrait-production/types";
+import { buildPortraitProductionPrompts } from "../server/portrait-production/generation";
 
 const originalAccessKey = process.env.PORTRAIT_ACCESS_KEY;
 
@@ -49,6 +50,18 @@ function sampleJob(): PortraitJob {
         pathname: "portrait-production/jobs/id/candidates/quiet.jpg",
         mimeType: "image/jpeg",
         status: "approved",
+        portraitDNAId: "style_quiet_executive",
+        portraitDNAVersion: "2.0",
+        engineVersion: "2.0",
+        compilerVersion: "2.0.0",
+        promptChecksum: "checksum",
+        reviewChecklist: {
+          pose: {},
+          gaze: {},
+          presence: {},
+          hair: {},
+        },
+        rejectionReasons: [],
         createdAt: now,
       },
     ],
@@ -103,5 +116,24 @@ describe("private asset contract", () => {
     expect(() => resolveJobAsset(job, "candidate:unknown")).toThrow(
       "订单中没有找到这个资产。",
     );
+  });
+});
+
+describe("Vercel Portrait Engine v2 production prompts", () => {
+  it("compiles four traceable v2 DNA prompts with identity first and negative last", async () => {
+    const prompts = await buildPortraitProductionPrompts("Keep it natural.");
+    expect(prompts).toHaveLength(4);
+    expect(prompts.every((prompt) => prompt.engineVersion === "2.0")).toBe(true);
+    expect(prompts.every((prompt) => prompt.compilerVersion === "2.0.0")).toBe(
+      true,
+    );
+    expect(
+      prompts.every((prompt) => prompt.providerPrompt.startsWith("[01 · IDENTITY]")),
+    ).toBe(true);
+    expect(
+      prompts.every((prompt) =>
+        prompt.providerPrompt.includes("[20 · NEGATIVE]"),
+      ),
+    ).toBe(true);
   });
 });
