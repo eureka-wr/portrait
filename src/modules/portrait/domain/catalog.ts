@@ -1,4 +1,4 @@
-import type { PortraitStyle, PromptModuleCategory } from "./types";
+import type { PortraitStyle, PromptModuleCategory } from "./types.js";
 
 export const COMPILER_VERSION_V1 = "1.0.0";
 export const COMPILER_VERSION_V2 = "2.0.0";

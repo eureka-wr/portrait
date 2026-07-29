@@ -4,12 +4,12 @@ import {
   PORTRAIT_STYLE_VERSIONS,
   PROMPT_ORDER_V1,
   PROMPT_ORDER_V2,
-} from "../domain/catalog";
+} from "../domain/catalog.js";
 import type {
   CompiledPrompt,
   PortraitStyle,
   PromptModuleCategory,
-} from "../domain/types";
+} from "../domain/types.js";
 
 export type PromptCompilationInput = {
   portraitDNAId: string;

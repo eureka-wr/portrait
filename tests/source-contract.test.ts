@@ -41,4 +41,10 @@ describe("production safety contracts", () => {
     expect(modelSources).toContain("gpt-image-2");
     expect(modelSources).not.toContain("gpt-image-1.5");
   });
+
+  it("keeps Vercel runtime imports resolvable after ESM compilation", () => {
+    const compiler = read("src/modules/portrait/prompts/compiler.ts");
+    expect(compiler).toContain('from "../domain/catalog.js"');
+    expect(compiler).toContain('from "../domain/types.js"');
+  });
 });
