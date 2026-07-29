@@ -17,8 +17,8 @@ export type PortraitCandidate = {
   mimeType: "image/jpeg";
   status: CandidateStatus;
   portraitDNAId: string;
-  portraitDNAVersion: "2.0";
-  engineVersion: "2.0";
+  portraitDNAVersion: string;
+  engineVersion: string;
   compilerVersion: string;
   promptChecksum: string;
   reviewChecklist: {

@@ -127,6 +127,30 @@ const statusLabels: Record<JobStatus, string> = {
 const channelOptions = ["职业主页", "简历 / CV", "小红书", "LinkedIn", "企业官网"];
 const jobStorageKey = "catv-portrait-current-job";
 
+function readStoredJobId() {
+  try {
+    return localStorage.getItem(jobStorageKey);
+  } catch {
+    return null;
+  }
+}
+
+function storeJobId(jobId: string) {
+  try {
+    localStorage.setItem(jobStorageKey, jobId);
+  } catch {
+    // The workspace remains usable when browser storage is unavailable.
+  }
+}
+
+function clearStoredJobId() {
+  try {
+    localStorage.removeItem(jobStorageKey);
+  } catch {
+    // Nothing else is required when browser storage is unavailable.
+  }
+}
+
 const productionReviewGroups = {
   pose: [
     ["face_nearly_frontal", "面部接近正面"],
@@ -187,6 +211,40 @@ function BrandMark() {
       <i />
     </span>
   );
+}
+
+class StudioErrorBoundary extends React.Component<
+  { children: React.ReactNode; onReset: () => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("[portrait-studio] workspace render failed", {
+      error: error.message,
+      componentStack: info.componentStack,
+    });
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="page-loading workspace-crash">
+        <div>
+          <CircleAlert size={24} />
+          <h1>订单数据需要重新载入</h1>
+          <p>历史订单格式未能正常显示。返回订单列表后即可继续操作。</p>
+          <button className="primary" onClick={this.props.onReset}>
+            返回并重新进入工作台
+          </button>
+        </div>
+      </div>
+    );
+  }
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -737,9 +795,14 @@ function CandidateReviewControls({
     rejectionReasons: string[],
   ) => void;
 }) {
-  const [checklist, setChecklist] = useState(candidate.reviewChecklist);
+  const [checklist, setChecklist] = useState(() => ({
+    pose: candidate.reviewChecklist?.pose ?? {},
+    gaze: candidate.reviewChecklist?.gaze ?? {},
+    presence: candidate.reviewChecklist?.presence ?? {},
+    hair: candidate.reviewChecklist?.hair ?? {},
+  }));
   const [reason, setReason] = useState(
-    candidate.rejectionReasons[0] ?? "other",
+    candidate.rejectionReasons?.[0] ?? "other",
   );
 
   return (
@@ -1033,8 +1096,8 @@ function JobWorkspace({
                     <strong>{candidate.label}</strong>
                     <small>{candidate.description}</small>
                     <small>
-                      DNA v{candidate.portraitDNAVersion} · Compiler{" "}
-                      {candidate.compilerVersion}
+                      DNA v{candidate.portraitDNAVersion || "legacy"} · Compiler{" "}
+                      {candidate.compilerVersion || "legacy"}
                     </small>
                   </div>
                   {candidate.status === "pending" && (
@@ -1321,7 +1384,7 @@ function Studio({
   onSession: (session: SessionStatus) => void;
   onBack: () => void;
 }) {
-  const [storedJobId] = useState(() => localStorage.getItem(jobStorageKey));
+  const [storedJobId] = useState(readStoredJobId);
   const [studioView, setStudioView] = useState<"orders" | "create" | "job">(
     storedJobId ? "job" : "orders",
   );
@@ -1342,7 +1405,7 @@ function Studio({
         b.updatedAt.localeCompare(a.updatedAt),
       ),
     );
-    localStorage.setItem(jobStorageKey, next.id);
+    storeJobId(next.id);
   }, []);
 
   const refreshOrders = useCallback(async (showActivity = true) => {
@@ -1381,7 +1444,7 @@ function Studio({
         updateJob(restoredResult.value);
         setStudioView("job");
       } else if (storedJobId) {
-        localStorage.removeItem(jobStorageKey);
+        clearStoredJobId();
         setJob(null);
         setStudioView("orders");
         if (restoredResult.status === "rejected") {
@@ -1434,13 +1497,13 @@ function Studio({
   }
 
   function showOrders() {
-    localStorage.removeItem(jobStorageKey);
+    clearStoredJobId();
     setStudioView("orders");
     void refreshOrders(false);
   }
 
   function showCreate() {
-    localStorage.removeItem(jobStorageKey);
+    clearStoredJobId();
     setJob(null);
     setLoadError("");
     setStudioView("create");
@@ -1542,7 +1605,7 @@ function Studio({
               onJob={updateJob}
               onBackToOrders={showOrders}
               onClear={() => {
-                localStorage.removeItem(jobStorageKey);
+                clearStoredJobId();
                 setJob(null);
                 setStudioView("orders");
                 void refreshOrders(false);
@@ -1627,14 +1690,21 @@ function App() {
     );
   }
   return (
-    <Studio
-      session={session}
-      onSession={(next) => {
-        setSession(next);
-        if (!next.authenticated) setView("login");
+    <StudioErrorBoundary
+      onReset={() => {
+        clearStoredJobId();
+        setView("landing");
       }}
-      onBack={() => setView("landing")}
-    />
+    >
+      <Studio
+        session={session}
+        onSession={(next) => {
+          setSession(next);
+          if (!next.authenticated) setView("login");
+        }}
+        onBack={() => setView("landing")}
+      />
+    </StudioErrorBoundary>
   );
 }
 

@@ -25,6 +25,65 @@ function assetUrl(jobId: string, asset: string, version: string) {
   return `/api/asset?${query.toString()}`;
 }
 
+const candidateStyleIds: Record<string, string> = {
+  "composed-leader": "style_quiet_executive",
+  "global-professional": "style_global_professional",
+  "executive-presence": "style_boardroom_leadership",
+  "founder-studio": "style_founder_studio",
+};
+
+function safeRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, boolean>)
+    : {};
+}
+
+function normalizeCandidate(
+  candidate: PortraitCandidate,
+  index: number,
+  job: PortraitJob,
+) {
+  const id = candidate.id || `legacy-candidate-${index + 1}`;
+  const portraitDNAId =
+    candidate.portraitDNAId ||
+    candidateStyleIds[id] ||
+    (index === 0 ? "style_quiet_executive" : "legacy_style");
+  const reviewChecklist = candidate.reviewChecklist;
+
+  return {
+    id,
+    label:
+      portraitDNAId === "style_quiet_executive"
+        ? "从容领导力"
+        : candidate.label || `候选照片 ${index + 1}`,
+    description: candidate.description || "历史订单候选照片",
+    mimeType: candidate.mimeType || ("image/jpeg" as const),
+    status: candidate.status || ("pending" as const),
+    portraitDNAId,
+    portraitDNAVersion: candidate.portraitDNAVersion || "legacy",
+    engineVersion: candidate.engineVersion || "legacy",
+    compilerVersion: candidate.compilerVersion || "legacy",
+    promptChecksum: candidate.promptChecksum || "",
+    reviewChecklist: {
+      pose: safeRecord(reviewChecklist?.pose),
+      gaze: safeRecord(reviewChecklist?.gaze),
+      presence: safeRecord(reviewChecklist?.presence),
+      hair: safeRecord(reviewChecklist?.hair),
+    },
+    rejectionReasons: Array.isArray(candidate.rejectionReasons)
+      ? candidate.rejectionReasons.filter(
+          (reason): reason is string => typeof reason === "string",
+        )
+      : [],
+    createdAt: candidate.createdAt || job.updatedAt || job.createdAt,
+    url: assetUrl(
+      job.id,
+      `candidate:${id}`,
+      job.updatedAt || job.createdAt,
+    ),
+  };
+}
+
 export async function putPrivate(
   pathname: string,
   body: Blob | ArrayBuffer | Buffer | string,
@@ -167,25 +226,9 @@ export function toSafeJob(job: PortraitJob): SafePortraitJob {
     url: assetUrl(job.id, "source", job.updatedAt),
   };
 
-  const candidates = job.candidates.map((candidate) => ({
-    id: candidate.id,
-    label:
-      candidate.portraitDNAId === "style_quiet_executive"
-        ? "从容领导力"
-        : candidate.label,
-    description: candidate.description,
-    mimeType: candidate.mimeType,
-    status: candidate.status,
-    portraitDNAId: candidate.portraitDNAId,
-    portraitDNAVersion: candidate.portraitDNAVersion,
-    engineVersion: candidate.engineVersion,
-    compilerVersion: candidate.compilerVersion,
-    promptChecksum: candidate.promptChecksum,
-    reviewChecklist: candidate.reviewChecklist,
-    rejectionReasons: candidate.rejectionReasons,
-    createdAt: candidate.createdAt,
-    url: assetUrl(job.id, `candidate:${candidate.id}`, job.updatedAt),
-  }));
+  const candidates = (Array.isArray(job.candidates) ? job.candidates : []).map(
+    (candidate, index) => normalizeCandidate(candidate, index, job),
+  );
 
   const safe: SafePortraitJob = {
     ...publicJob,

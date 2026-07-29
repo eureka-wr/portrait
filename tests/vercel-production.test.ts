@@ -108,10 +108,40 @@ describe("private asset contract", () => {
     expect(safe.candidates[0].url).toContain("candidate%3Acomposed-leader");
   });
 
-  it("normalizes historical candidate labels to the current public name", () => {
+  it("normalizes historical candidates before returning them to the workspace", () => {
     const job = sampleJob();
-    job.candidates[0].label = "Legacy style name";
-    expect(toSafeJob(job).candidates[0].label).toBe("从容领导力");
+    const legacyCandidate = job.candidates[0] as unknown as Record<
+      string,
+      unknown
+    >;
+    legacyCandidate.label = "Legacy style name";
+    for (const key of [
+      "portraitDNAId",
+      "portraitDNAVersion",
+      "engineVersion",
+      "compilerVersion",
+      "promptChecksum",
+      "reviewChecklist",
+      "rejectionReasons",
+    ]) {
+      delete legacyCandidate[key];
+    }
+
+    expect(toSafeJob(job).candidates[0]).toMatchObject({
+      label: "从容领导力",
+      portraitDNAId: "style_quiet_executive",
+      portraitDNAVersion: "legacy",
+      engineVersion: "legacy",
+      compilerVersion: "legacy",
+      promptChecksum: "",
+      reviewChecklist: {
+        pose: {},
+        gaze: {},
+        presence: {},
+        hair: {},
+      },
+      rejectionReasons: [],
+    });
   });
 
   it("only resolves assets that belong to the loaded job", () => {

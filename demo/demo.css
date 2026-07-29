@@ -770,6 +770,29 @@ textarea:focus {
   min-height: 100vh;
 }
 
+.workspace-crash > div {
+  display: flex;
+  width: min(460px, calc(100% - 40px));
+  flex-direction: column;
+  align-items: center;
+  padding: 36px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  text-align: center;
+}
+
+.workspace-crash h1 {
+  margin: 16px 0 8px;
+  color: var(--ink);
+  font-size: 24px;
+}
+
+.workspace-crash p {
+  margin: 0 0 20px;
+  line-height: 1.7;
+}
+
 .upload-layout {
   display: grid;
   grid-template-columns: 1.05fr 0.95fr;
