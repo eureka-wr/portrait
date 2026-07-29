@@ -38,13 +38,13 @@ Identity 保持人物；Source Interpretation 隔离原图模板效应；Pose �
 
 ## 十、光线标准
 
-Quiet Executive 使用大型柔光箱、轻填充和极弱轮廓光；Global Professional 使用现代办公环境中的方向性窗光；Boardroom 使用受控三点布光和更深中性色阶；Founder Studio 使用专业控制的柔和下午窗光。所有风格都必须保留自然眼神光和皮肤高光过渡。
+Composed Leader 使用大型柔光箱、轻填充和极弱轮廓光；Global Professional 使用现代办公环境中的方向性窗光；Boardroom 使用受控三点布光和更深中性色阶；Founder Studio 使用专业控制的柔和下午窗光。所有风格都必须保留自然眼神光和皮肤高光过渡。
 
 ## 十一、四种风格差异
 
 | DNA | 镜头 | Presence | 背景 | 服装 |
 | --- | --- | --- | --- | --- |
-| Quiet Executive | 105mm | 清晰、克制、安静权威 | 冷灰蓝渐变 | 黑/海军蓝/炭灰哑光 |
+| Composed Leader | 105mm | 清晰、克制、安静权威 | 冷灰蓝渐变 | 黑/海军蓝/炭灰哑光 |
 | Global Professional | 85mm | 开放、可信、协作 | 明亮现代办公室虚化 | 米白/浅灰现代剪裁 |
 | Boardroom Leadership | 105mm | 责任、判断、视觉重量 | 炭灰/深灰蓝 | 深色高级剪裁 |
 | Founder Studio | 85mm | 能动性、好奇、创造力 | 极简创意空间 | 针织/简洁衬衫/松弛剪裁 |

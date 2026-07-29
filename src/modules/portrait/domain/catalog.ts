@@ -80,9 +80,9 @@ const common = {
 export const PORTRAIT_STYLES_V1: PortraitStyle[] = [
   {
     id: "style_quiet_executive",
-    slug: "quiet-executive-signature",
-    publicName: "Quiet Executive Signature",
-    publicNameZh: "静默领导者",
+    slug: "composed-leader-signature",
+    publicName: "Composed Leader Signature",
+    publicNameZh: "从容领导力",
     internalReferenceName: "apple_executive_reference",
     description: "极简、克制且高智感的科技管理层形象。浅灰蓝背景与柔和棚拍让注意力只落在人物本身。",
     version: "1.0",
@@ -395,9 +395,9 @@ const sharedV2Parameters = {
 export const PORTRAIT_STYLES_V2: PortraitStyle[] = [
   {
     id: "style_quiet_executive",
-    slug: "quiet-executive",
-    publicName: "Quiet Executive",
-    publicNameZh: "静默领导者",
+    slug: "composed-leader",
+    publicName: "Composed Leader",
+    publicNameZh: "从容领导力",
     internalReferenceName: "quiet_executive_v2",
     description:
       "克制、清晰、有判断力的现代科技领导者形象，适合创始人、管理层、产品负责人、投资人和媒体资料。",
@@ -409,7 +409,7 @@ export const PORTRAIT_STYLES_V2: PortraitStyle[] = [
     modules: {
       ...sharedV2Modules,
       career_identity:
-        "Create a premium Quiet Executive portrait for a founder, senior operator, product leader or investor. Communicate clarity, emotional stability, judgment and quiet authority. The subject should feel grounded, credible and worthy of attention without theatrical dominance.",
+        "Create a premium Composed Leader portrait for a founder, senior operator, product leader or investor. Communicate clarity, emotional stability, judgment and quiet authority. The subject should feel grounded, credible and worthy of attention without theatrical dominance.",
       wardrobe:
         "Use minimalist premium wardrobe in black, navy or charcoal. Use matte fabrics, clean lines, refined tailoring and no visible branding. Keep accessories minimal and unobtrusive.",
       lens:

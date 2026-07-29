@@ -31,7 +31,7 @@ Prompt Compiler v2 按固定 20 模块编译：Identity 第一，Source Interpre
 
 ## 正式 Portrait DNA
 
-- Quiet Executive v2.0 / 静默领导者
+- Composed Leader v2.0 / 从容领导力
 - Global Professional v2.0 / 国际职业形象
 - Boardroom Leadership v2.0 / 高管领导力
 - Founder Studio v2.0 / 创业者工作室

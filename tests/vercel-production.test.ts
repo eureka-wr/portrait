@@ -45,8 +45,8 @@ function sampleJob(): PortraitJob {
     },
     candidates: [
       {
-        id: "quiet-leader",
-        label: "静默领导者",
+        id: "composed-leader",
+        label: "从容领导力",
         description: "测试",
         pathname: "portrait-production/jobs/id/candidates/quiet.jpg",
         mimeType: "image/jpeg",
@@ -105,13 +105,19 @@ describe("private asset contract", () => {
     const serialized = JSON.stringify(safe);
     expect(serialized).not.toContain("portrait-production/jobs/");
     expect(safe.source.url).toContain("/api/asset?");
-    expect(safe.candidates[0].url).toContain("candidate%3Aquiet-leader");
+    expect(safe.candidates[0].url).toContain("candidate%3Acomposed-leader");
+  });
+
+  it("normalizes historical candidate labels to the current public name", () => {
+    const job = sampleJob();
+    job.candidates[0].label = "Legacy style name";
+    expect(toSafeJob(job).candidates[0].label).toBe("从容领导力");
   });
 
   it("only resolves assets that belong to the loaded job", () => {
     const job = sampleJob();
     expect(resolveJobAsset(job, "source").pathname).toBe(job.source.pathname);
-    expect(resolveJobAsset(job, "candidate:quiet-leader")).toMatchObject({
+    expect(resolveJobAsset(job, "candidate:composed-leader")).toMatchObject({
       pathname: job.candidates[0].pathname,
       contentType: "image/jpeg",
       filename: "CATV-20260728-ABC123-01.jpg",

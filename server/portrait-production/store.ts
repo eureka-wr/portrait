@@ -169,7 +169,10 @@ export function toSafeJob(job: PortraitJob): SafePortraitJob {
 
   const candidates = job.candidates.map((candidate) => ({
     id: candidate.id,
-    label: candidate.label,
+    label:
+      candidate.portraitDNAId === "style_quiet_executive"
+        ? "从容领导力"
+        : candidate.label,
     description: candidate.description,
     mimeType: candidate.mimeType,
     status: candidate.status,

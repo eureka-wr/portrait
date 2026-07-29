@@ -16,8 +16,8 @@ import type {
 
 const VARIANTS = [
   {
-    id: "quiet-leader",
-    label: "静默领导者",
+    id: "composed-leader",
+    label: "从容领导力",
     description: "灰蓝极简 · 克制自信 · 科技管理层",
     styleId: "style_quiet_executive",
   },
@@ -240,7 +240,11 @@ export async function createDeliveryPackage(job: PortraitJob) {
     "CATV Portrait Studio 交付包",
     `订单：${job.orderNo}`,
     `客户：${job.customerName || "未填写"}`,
-    `最终形象：${selected.label}`,
+    `最终形象：${
+      selected.portraitDNAId === "style_quiet_executive"
+        ? "从容领导力"
+        : selected.label
+    }`,
     "",
     "文件说明：",
     "- CATV-HD.jpg：高清 JPG",

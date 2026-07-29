@@ -13,7 +13,7 @@ Presence 不是把人物做得严厉，而是让画面中的人显得完整、�
 - agency：是否显得能发起行动和完成决定。
 - approachability / openness：是否可接近、愿意协作。
 
-四种 DNA 的权重必须不同。Boardroom 的 authority/groundedness 高于 Quiet Executive；Global Professional 强调 openness、credibility 与 approachability；Founder Studio 强调 agency 和 creativity。
+四种 DNA 的权重必须不同。Boardroom 的 authority/groundedness 高于 Composed Leader；Global Professional 强调 openness、credibility 与 approachability；Founder Studio 强调 agency 和 creativity。
 
 ## 审核
 
