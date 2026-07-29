@@ -22,6 +22,7 @@ async function handle(request: Request) {
     const job = await loadJob(jobId);
     const asset = resolveJobAsset(job, assetKey);
     const object = await readPrivate(asset.pathname);
+    const downloadRequested = url.searchParams.get("download") === "1";
 
     const headers = new Headers({
       "Content-Type": object.blob.contentType || asset.contentType,
@@ -29,7 +30,7 @@ async function handle(request: Request) {
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "default-src 'none'",
     });
-    if (asset.download) {
+    if (asset.download || downloadRequested) {
       headers.set(
         "Content-Disposition",
         `attachment; filename="${asset.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}"`,

@@ -111,9 +111,12 @@ describe("private asset contract", () => {
   it("only resolves assets that belong to the loaded job", () => {
     const job = sampleJob();
     expect(resolveJobAsset(job, "source").pathname).toBe(job.source.pathname);
-    expect(
-      resolveJobAsset(job, "candidate:quiet-leader").pathname,
-    ).toBe(job.candidates[0].pathname);
+    expect(resolveJobAsset(job, "candidate:quiet-leader")).toMatchObject({
+      pathname: job.candidates[0].pathname,
+      contentType: "image/jpeg",
+      filename: "CATV-20260728-ABC123-01.jpg",
+      download: false,
+    });
     expect(() => resolveJobAsset(job, "candidate:unknown")).toThrow(
       "订单中没有找到这个资产。",
     );

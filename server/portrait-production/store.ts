@@ -243,12 +243,15 @@ export function resolveJobAsset(job: PortraitJob, asset: string) {
 
   if (asset.startsWith("candidate:")) {
     const candidateId = asset.slice("candidate:".length);
-    const candidate = job.candidates.find((item) => item.id === candidateId);
+    const candidateIndex = job.candidates.findIndex(
+      (item) => item.id === candidateId,
+    );
+    const candidate = job.candidates[candidateIndex];
     if (candidate) {
       return {
         pathname: candidate.pathname,
         contentType: candidate.mimeType,
-        filename: `candidate-${candidate.id}.jpg`,
+        filename: `CATV-${job.orderNo}-${String(candidateIndex + 1).padStart(2, "0")}.jpg`,
         download: false,
       };
     }

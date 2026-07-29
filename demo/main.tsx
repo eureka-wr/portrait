@@ -1052,6 +1052,13 @@ function JobWorkspace({
                     />
                   )}
                   <div className="candidate-actions">
+                    <a
+                      className="candidate-download"
+                      href={`${candidate.url}&download=1`}
+                      download={`CATV-${job.orderNo}-${String(index + 1).padStart(2, "0")}.jpg`}
+                    >
+                      <Download size={14} /> 下载候选图
+                    </a>
                     {candidate.status === "approved" && (
                       <button
                         className="select-button"
